@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Video → Volume (Z=time) Slicer · three.js</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0d12;
+        color: #e6e6e6;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      #ui {
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: 0;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 12px;
+        background: rgba(10, 12, 16, 0.8);
+        backdrop-filter: blur(6px);
+        border-bottom: 1px solid #1e2230;
+        z-index: 5;
+      }
+      #ui label {
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      #canvas {
+        position: fixed;
+        inset: 0;
+        top: 48px;
+      }
+      input[type="range"] {
+        width: 200px;
+      }
+      .pill {
+        padding: 4px 8px;
+        border: 1px solid #283044;
+        border-radius: 999px;
+        background: #111521;
+      }
+      .muted {
+        opacity: 0.75;
+        font-size: 12px;
+      }
+      a {
+        color: #8bb7ff;
+        text-decoration: none;
+      }
+    </style>
+    <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel" data-type="module" data-presets="react">
+      import React, {
+        useCallback,
+        useEffect,
+        useMemo,
+        useRef,
+        useState,
+      } from "https://esm.sh/react@18.2.0";
+      import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
+      import * as THREE from "https://esm.sh/three@0.160.0";
+      import {
+        Canvas,
+        useFrame,
+      } from "https://esm.sh/@react-three/fiber@8.15.15?deps=three@0.160.0&external=react,react-dom";
+      import { OrbitControls } from "https://esm.sh/@react-three/drei@9.92.5?deps=three@0.160.0&external=react,react-dom,@react-three/fiber";
+
+      const V_W = 256;
+      const V_H = 256;
+      const V_D = 64;
+      const CHANNELS = 1;
+
+      const vertexShader = `
+        uniform int axis;
+        uniform float sliceN;
+        out vec3 vUVW;
+        void main() {
+          vec2 uv = uv;
+          float s = clamp(sliceN, 0.0, 1.0);
+          vec3 pos;
+          if (axis == 2) {
+            vUVW = vec3(uv.x, uv.y, s);
+            pos = vec3(uv - 0.5, 0.0);
+            pos.z = s - 0.5;
+          } else if (axis == 0) {
+            vUVW = vec3(s, uv.x, uv.y);
+            pos = vec3(0.0, uv - 0.5);
+            pos.x = s - 0.5;
+          } else {
+            vUVW = vec3(uv.x, s, uv.y);
+            pos = vec3(uv.x - 0.5, 0.0, uv.y - 0.5);
+            pos.y = s - 0.5;
+          }
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `;
+
+      const fragmentShader = `
+        precision highp float;
+        precision highp sampler3D;
+        uniform sampler3D volumeTex;
+        in vec3 vUVW;
+        out vec4 outColor;
+        void main() {
+          float l = texture(volumeTex, clamp(vUVW, vec3(0.0), vec3(1.0))).r;
+          float g = pow(l, 0.9);
+          outColor = vec4(vec3(g), 1.0);
+        }
+      `;
+
+      function CubeWire() {
+        const line = useMemo(() => {
+          const box = new THREE.BoxGeometry(1, 1, 1);
+          const edges = new THREE.EdgesGeometry(box);
+          box.dispose();
+          const material = new THREE.LineBasicMaterial({
+            color: 0x334055,
+            transparent: true,
+            opacity: 0.6,
+          });
+          const mesh = new THREE.LineSegments(edges, material);
+          return mesh;
+        }, []);
+
+        useEffect(() => {
+          return () => {
+            if (line.geometry) line.geometry.dispose();
+            if (line.material) line.material.dispose();
+          };
+        }, [line]);
+
+        return <primitive object={line} />;
+      }
+
+      function SlicePlane({ texture, axis, slice }) {
+        const materialRef = useRef();
+        const uniforms = useMemo(
+          () => ({
+            volumeTex: { value: null },
+            axis: { value: 2 },
+            sliceN: { value: 0.0 },
+            dims: { value: new THREE.Vector3(V_W, V_H, V_D) },
+          }),
+          []
+        );
+
+        useEffect(() => {
+          if (materialRef.current) {
+            materialRef.current.uniforms.volumeTex.value = texture;
+          }
+        }, [texture]);
+
+        useEffect(() => {
+          if (materialRef.current) {
+            materialRef.current.uniforms.axis.value = axis;
+          }
+        }, [axis]);
+
+        useEffect(() => {
+          if (materialRef.current) {
+            materialRef.current.uniforms.sliceN.value = slice;
+          }
+        }, [slice]);
+
+        return (
+          <mesh>
+            <planeGeometry args={[1, 1, 1, 1]} />
+            <shaderMaterial
+              ref={materialRef}
+              uniforms={uniforms}
+              vertexShader={vertexShader}
+              fragmentShader={fragmentShader}
+              side={THREE.DoubleSide}
+              transparent={false}
+            />
+          </mesh>
+        );
+      }
+
+      function SceneContent({
+        axis,
+        slice,
+        setSlice,
+        isPlaying,
+        speed,
+        texture,
+      }) {
+        useFrame((_, delta) => {
+          if (!texture || !isPlaying) return;
+          setSlice((prev) => {
+            let next = prev + delta * 0.15 * speed;
+            if (next > 1) next -= 1;
+            return next;
+          });
+        });
+
+        return (
+          <>
+            <ambientLight intensity={0.4} />
+            <directionalLight position={[2, 3, 2]} intensity={0.8} />
+            <CubeWire />
+            {texture && (
+              <SlicePlane texture={texture} axis={axis} slice={slice} />
+            )}
+            <OrbitControls makeDefault enableDamping />
+          </>
+        );
+      }
+
+      function App() {
+        const [axis, setAxis] = useState(2);
+        const [slice, setSlice] = useState(0);
+        const [isPlaying, setIsPlaying] = useState(true);
+        const [speed, setSpeed] = useState(1);
+        const [status, setStatus] = useState("");
+        const [volumeTexture, setVolumeTexture] = useState(null);
+
+        const cleanupTexture = useCallback(() => {
+          setVolumeTexture((prev) => {
+            if (prev) {
+              prev.dispose();
+            }
+            return null;
+          });
+        }, []);
+
+        const processVideoSource = useCallback(
+          async (url, cleanup) => {
+            cleanupTexture();
+            setSlice(0);
+            setStatus("영상 데이터를 준비하는 중...");
+
+            const video = document.createElement("video");
+            video.src = url;
+            video.muted = true;
+            video.playsInline = true;
+
+            try {
+              await video.play();
+            } catch (err) {
+              // 자동 재생 차단 시 무시
+            }
+
+            if (video.readyState < 1) {
+              await new Promise((res) =>
+                video.addEventListener("loadedmetadata", res, { once: true })
+              );
+            }
+
+            const duration = Number.isFinite(video.duration)
+              ? video.duration
+              : 0;
+            setStatus(`메타데이터 로드됨 · duration ${duration.toFixed(2)}s`);
+
+            const canvas = document.createElement("canvas");
+            canvas.width = V_W;
+            canvas.height = V_H;
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            if (!ctx) {
+              throw new Error("CanvasRenderingContext2D 생성 실패");
+            }
+
+            const volumeData = new Uint8Array(V_W * V_H * V_D * CHANNELS);
+            let captured = 0;
+
+            const writeFrame = () => {
+              ctx.drawImage(video, 0, 0, V_W, V_H);
+              const img = ctx.getImageData(0, 0, V_W, V_H).data;
+              const z = captured;
+              const base = z * V_W * V_H * CHANNELS;
+
+              for (let y = 0; y < V_H; y++) {
+                const rowOff = y * V_W;
+                for (let x = 0; x < V_W; x++) {
+                  const idx2d = (rowOff + x) * 4;
+                  const r = img[idx2d];
+                  const g = img[idx2d + 1];
+                  const b = img[idx2d + 2];
+                  const luma = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+                  const idx3d = base + (rowOff + x) * CHANNELS;
+                  volumeData[idx3d] = luma;
+                }
+              }
+              captured++;
+              setStatus(`프레임 적재: ${captured}/${V_D}`);
+            };
+
+            return new Promise((resolve, reject) => {
+              let finished = false;
+
+              const handleError = (err) => {
+                if (finished) return;
+                finished = true;
+                video.pause();
+                if (cleanup) cleanup();
+                setStatus("영상 처리 중 오류가 발생했습니다.");
+                reject(err);
+              };
+
+              const finalize = () => {
+                if (finished) return;
+                finished = true;
+                video.pause();
+                if (cleanup) cleanup();
+
+                const tex = new THREE.Data3DTexture(volumeData, V_W, V_H, V_D);
+                tex.format = THREE.RedFormat;
+                tex.type = THREE.UnsignedByteType;
+                tex.minFilter = THREE.LinearFilter;
+                tex.magFilter = THREE.LinearFilter;
+                tex.wrapS = tex.wrapT = tex.wrapR = THREE.ClampToEdgeWrapping;
+                tex.unpackAlignment = 1;
+                tex.needsUpdate = true;
+
+                setVolumeTexture(tex);
+                const voxels = ((V_W * V_H * V_D) / 1e6).toFixed(1);
+                setStatus(
+                  `3D 텍스처 준비 완료 (${V_W}×${V_H}×${V_D}, 1ch ≈ ${voxels}M voxels)`
+                );
+                resolve();
+              };
+
+              const safeWriteFrame = () => {
+                try {
+                  writeFrame();
+                } catch (err) {
+                  handleError(err);
+                  return false;
+                }
+                return true;
+              };
+
+              if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+                const onFrame = () => {
+                  if (captured < V_D) {
+                    if (safeWriteFrame()) {
+                      video.requestVideoFrameCallback(onFrame);
+                    }
+                  } else {
+                    finalize();
+                  }
+                };
+                video.requestVideoFrameCallback(onFrame);
+              } else {
+                const step = duration > 0 ? duration / V_D : 0;
+                let target = 0;
+                const onTimeUpdate = () => {
+                  if (captured >= V_D) {
+                    video.removeEventListener("timeupdate", onTimeUpdate);
+                    finalize();
+                    return;
+                  }
+                  if (!safeWriteFrame()) {
+                    video.removeEventListener("timeupdate", onTimeUpdate);
+                    return;
+                  }
+                  target += step;
+                  if (duration > 0) {
+                    video.currentTime = Math.min(target, duration);
+                  }
+                };
+                video.addEventListener("timeupdate", onTimeUpdate);
+                video.currentTime = 0;
+                video.play().catch(() => {});
+              }
+
+              video.addEventListener(
+                "error",
+                (event) => {
+                  handleError(
+                    event instanceof ErrorEvent ? event.error : event
+                  );
+                },
+                { once: true }
+              );
+            });
+          },
+          [cleanupTexture]
+        );
+
+        const handleFile = useCallback(
+          (event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const objectURL = URL.createObjectURL(file);
+            processVideoSource(objectURL, () =>
+              URL.revokeObjectURL(objectURL)
+            ).catch((err) => {
+              console.error(err);
+              setStatus("영상 처리 중 오류가 발생했습니다.");
+            });
+          },
+          [processVideoSource]
+        );
+
+        useEffect(() => {
+          processVideoSource("test.mp4").catch((err) => {
+            console.error(err);
+            setStatus("test.mp4 로드에 실패했습니다.");
+          });
+        }, [processVideoSource]);
+
+        return (
+          <>
+            <div id="ui">
+              <input
+                id="file"
+                type="file"
+                accept="video/*"
+                onChange={handleFile}
+              />
+              <label className="pill">
+                축:
+                <select
+                  id="axis"
+                  value={axis}
+                  onChange={(e) => setAxis(parseInt(e.target.value, 10))}
+                >
+                  <option value={2}>Z(시간) 슬라이스</option>
+                  <option value={0}>X 슬라이스</option>
+                  <option value={1}>Y 슬라이스</option>
+                </select>
+              </label>
+              <label className="pill">
+                슬라이스:
+                <input
+                  id="slice"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  value={slice}
+                  onChange={(e) => setSlice(parseFloat(e.target.value))}
+                />
+                <span id="sliceVal" className="muted">
+                  {slice.toFixed(3)}
+                </span>
+              </label>
+              <label className="pill">
+                재생:
+                <input
+                  id="play"
+                  type="checkbox"
+                  checked={isPlaying}
+                  onChange={(e) => setIsPlaying(e.target.checked)}
+                />
+                속도
+                <input
+                  id="speed"
+                  type="range"
+                  min="0.1"
+                  max="4"
+                  step="0.1"
+                  value={speed}
+                  onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                />
+                <span id="speedVal" className="muted">
+                  {speed.toFixed(1)}x
+                </span>
+              </label>
+              <span id="status" className="muted">
+                {status}
+              </span>
+            </div>
+            <Canvas
+              id="canvas"
+              camera={{
+                fov: 55,
+                position: [1.4, 1.1, 1.4],
+                near: 0.01,
+                far: 10,
+              }}
+              dpr={[1, 2]}
+              gl={{ antialias: true, alpha: true }}
+              style={{ position: "fixed", inset: 0, top: "48px" }}
+              onCreated={({ gl }) => {
+                gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                const context = gl.getContext();
+                const hasWebGL2 =
+                  typeof WebGL2RenderingContext !== "undefined" &&
+                  context instanceof WebGL2RenderingContext;
+                if (!hasWebGL2) {
+                  alert(
+                    "이 예제는 WebGL2가 필요합니다. 최신 Chrome/Edge/Firefox를 사용해주세요."
+                  );
+                }
+              }}
+            >
+              <SceneContent
+                axis={axis}
+                slice={slice}
+                setSlice={setSlice}
+                isPlaying={isPlaying}
+                speed={speed}
+                texture={volumeTexture}
+              />
+            </Canvas>
+          </>
+        );
+      }
+
+      const root = createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
+</html>
