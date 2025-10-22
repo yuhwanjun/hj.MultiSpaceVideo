@@ -35,6 +35,7 @@ export default function Page() {
   const [pointSize, setPointSize] = useState<number>(0.8);  // 포인트 크기 (shader uniform)
   const [opacity, setOpacity] = useState<number>(1.0);      // 포인트 불투명도
   const [sizeAttenuation, setSizeAttenuation] = useState<boolean>(true);
+  const [showUI, setShowUI] = useState<boolean>(true);
 
   // Slice ranges (object space; z range uses spacing-applied units)
   const [xMin, setXMin] = useState<number>(-64);
@@ -498,241 +499,263 @@ export default function Page() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", background: "#111", color: "#eee" }}>
-      {/* UI Panel */}
-      <div
+      <button
+        onClick={() => setShowUI(prev => !prev)}
         style={{
           position: "fixed",
           top: 10,
-          left: 10,
-          zIndex: 10,
-          background: "rgba(0,0,0,.5)",
-          padding: "10px 12px",
-          borderRadius: 8,
-          display: "grid",
-          gridTemplateColumns: "auto 1fr auto",
-          gap: 8,
-          alignItems: "center",
+          right: 10,
+          zIndex: 20,
+          background: "rgba(0,0,0,.6)",
+          color: "#eee",
+          border: "1px solid rgba(255,255,255,.25)",
+          borderRadius: 6,
+          padding: "6px 10px",
+          cursor: "pointer",
         }}
       >
-        <div style={{ display: "flex", gap: 8, gridColumn: "1 / -1" }}>
-          <button onClick={startCapture} disabled={isCapturing}>
-            라이브 시작
-          </button>
-          <button onClick={() => stopCapture()} disabled={!isCapturing}>
-            라이브 중지
-          </button>
-          <button
-            onClick={() => {
-              disposePoints();
-              setStatus("포인트 클라우드를 초기화했습니다.");
-            }}
-            disabled={isCapturing}
-          >
-            포인트 초기화
-          </button>
-        </div>
+        {showUI ? "UI 숨기기" : "UI 보이기"}
+      </button>
 
-        <label>W×H</label>
-        <div style={{ display: "flex", gap: 6 }}>
+      {/* UI Panel */}
+      {showUI && (
+        <div
+          style={{
+            position: "fixed",
+            top: 10,
+            left: 10,
+            zIndex: 10,
+            background: "rgba(0,0,0,.5)",
+            padding: "10px 12px",
+            borderRadius: 8,
+            display: "grid",
+            gridTemplateColumns: "auto 1fr auto",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
+          <div style={{ display: "flex", gap: 8, gridColumn: "1 / -1" }}>
+            <button onClick={startCapture} disabled={isCapturing}>
+              라이브 시작
+            </button>
+            <button onClick={() => stopCapture()} disabled={!isCapturing}>
+              라이브 중지
+            </button>
+            <button
+              onClick={() => {
+                disposePoints();
+                setStatus("포인트 클라우드를 초기화했습니다.");
+              }}
+              disabled={isCapturing}
+            >
+              포인트 초기화
+            </button>
+          </div>
+
+          <label>W×H</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="number"
+              value={targetW}
+              min={8}
+              step={8}
+              style={{ width: 70 }}
+              onChange={(e) => setTargetW(parseInt(e.currentTarget.value || "128", 10))}
+              disabled={isCapturing}
+            />
+            <input
+              type="number"
+              value={targetH}
+              min={8}
+              step={8}
+              style={{ width: 70 }}
+              onChange={(e) => setTargetH(parseInt(e.currentTarget.value || "72", 10))}
+              disabled={isCapturing}
+            />
+          </div>
+          <span />
+
+          <label>Frames</label>
           <input
             type="number"
-            value={targetW}
-            min={8}
-            step={8}
+            value={targetFrames}
+            min={2}
+            step={1}
             style={{ width: 70 }}
-            onChange={(e) => setTargetW(parseInt(e.currentTarget.value || "128", 10))}
+            onChange={(e) => setTargetFrames(parseInt(e.currentTarget.value || "60", 10))}
             disabled={isCapturing}
           />
-          <input
-            type="number"
-            value={targetH}
-            min={8}
-            step={8}
-            style={{ width: 70 }}
-            onChange={(e) => setTargetH(parseInt(e.currentTarget.value || "72", 10))}
-            disabled={isCapturing}
-          />
-        </div>
-        <span />
+          <span />
 
-        <label>Frames</label>
-        <input
-          type="number"
-          value={targetFrames}
-          min={2}
-          step={1}
-          style={{ width: 70 }}
-          onChange={(e) => setTargetFrames(parseInt(e.currentTarget.value || "60", 10))}
-          disabled={isCapturing}
-        />
-        <span />
-
-        {/* Visual controls */}
-        <label>Spacing (z)</label>
-        <input
-          type="range"
-          min={0.1}
-          max={10}
-          step={0.1}
-          value={spacing}
-          onChange={(e) => setSpacing(parseFloat(e.currentTarget.value))}
-        />
-        <span style={{ opacity: 0.8 }}>{spacing.toFixed(1)}</span>
-
-        <label>Point Size</label>
-        <input
-          type="range"
-          min={0.1}
-          max={5}
-          step={0.1}
-          value={pointSize}
-          onChange={(e) => setPointSize(parseFloat(e.currentTarget.value))}
-        />
-        <span style={{ opacity: 0.8 }}>{pointSize.toFixed(1)}</span>
-
-        <label>Opacity</label>
-        <input
-          type="range"
-          min={0.05}
-          max={1}
-          step={0.05}
-          value={opacity}
-          onChange={(e) => setOpacity(parseFloat(e.currentTarget.value))}
-        />
-        <span style={{ opacity: 0.8 }}>{opacity.toFixed(2)}</span>
-
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={sizeAttenuation}
-            onChange={(e) => setSizeAttenuation(e.currentTarget.checked)}
-          />
-          sizeAttenuation
-        </label>
-        <span />
-        <span />
-
-        <label>X slice</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          {/* Visual controls */}
+          <label>Spacing (z)</label>
           <input
             type="range"
-            min={extentsRef.current.xMinAll}
-            max={extentsRef.current.xMaxAll}
-            step={1}
-            value={xMin}
-            onChange={(e) =>
-              setXMin(
-                clamp(parseFloat(e.currentTarget.value), extentsRef.current.xMinAll, xMax)
-              )
-            }
+            min={0.1}
+            max={10}
+            step={0.1}
+            value={spacing}
+            onChange={(e) => setSpacing(parseFloat(e.currentTarget.value))}
           />
-          <input
-            type="range"
-            min={extentsRef.current.xMinAll}
-            max={extentsRef.current.xMaxAll}
-            step={1}
-            value={xMax}
-            onChange={(e) =>
-              setXMax(
-                clamp(parseFloat(e.currentTarget.value), xMin, extentsRef.current.xMaxAll)
-              )
-            }
-          />
-        </div>
-        <span style={{ opacity: 0.8 }}>
-          {xMin.toFixed(0)} ~ {xMax.toFixed(0)}
-        </span>
+          <span style={{ opacity: 0.8 }}>{spacing.toFixed(1)}</span>
 
-        <label>Y slice</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          <label>Point Size</label>
           <input
             type="range"
-            min={extentsRef.current.yMinAll}
-            max={extentsRef.current.yMaxAll}
-            step={1}
-            value={yMin}
-            onChange={(e) =>
-              setYMin(
-                clamp(parseFloat(e.currentTarget.value), extentsRef.current.yMinAll, yMax)
-              )
-            }
+            min={0.1}
+            max={5}
+            step={0.1}
+            value={pointSize}
+            onChange={(e) => setPointSize(parseFloat(e.currentTarget.value))}
           />
-          <input
-            type="range"
-            min={extentsRef.current.yMinAll}
-            max={extentsRef.current.yMaxAll}
-            step={1}
-            value={yMax}
-            onChange={(e) =>
-              setYMax(
-                clamp(parseFloat(e.currentTarget.value), yMin, extentsRef.current.yMaxAll)
-              )
-            }
-          />
-        </div>
-        <span style={{ opacity: 0.8 }}>
-          {yMin.toFixed(0)} ~ {yMax.toFixed(0)}
-        </span>
+          <span style={{ opacity: 0.8 }}>{pointSize.toFixed(1)}</span>
 
-        <label>Z slice</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          <label>Opacity</label>
           <input
             type="range"
-            min={extentsRef.current.zMinBase * spacing}
-            max={extentsRef.current.zMaxBase * spacing}
-            step={0.5}
-            value={zMin}
-            onChange={(e) =>
-              setZMin(
-                clamp(
-                  parseFloat(e.currentTarget.value),
-                  extentsRef.current.zMinBase * spacing,
-                  zMax
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={opacity}
+            onChange={(e) => setOpacity(parseFloat(e.currentTarget.value))}
+          />
+          <span style={{ opacity: 0.8 }}>{opacity.toFixed(2)}</span>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={sizeAttenuation}
+              onChange={(e) => setSizeAttenuation(e.currentTarget.checked)}
+            />
+            sizeAttenuation
+          </label>
+          <span />
+          <span />
+
+          <label>X slice</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            <input
+              type="range"
+              min={extentsRef.current.xMinAll}
+              max={extentsRef.current.xMaxAll}
+              step={1}
+              value={xMin}
+              onChange={(e) =>
+                setXMin(
+                  clamp(parseFloat(e.currentTarget.value), extentsRef.current.xMinAll, xMax)
                 )
-              )
-            }
-          />
-          <input
-            type="range"
-            min={extentsRef.current.zMinBase * spacing}
-            max={extentsRef.current.zMaxBase * spacing}
-            step={0.5}
-            value={zMax}
-            onChange={(e) =>
-              setZMax(
-                clamp(
-                  parseFloat(e.currentTarget.value),
-                  zMin,
-                  extentsRef.current.zMaxBase * spacing
+              }
+            />
+            <input
+              type="range"
+              min={extentsRef.current.xMinAll}
+              max={extentsRef.current.xMaxAll}
+              step={1}
+              value={xMax}
+              onChange={(e) =>
+                setXMax(
+                  clamp(parseFloat(e.currentTarget.value), xMin, extentsRef.current.xMaxAll)
                 )
-              )
-            }
-          />
+              }
+            />
+          </div>
+          <span style={{ opacity: 0.8 }}>
+            {xMin.toFixed(0)} ~ {xMax.toFixed(0)}
+          </span>
+
+          <label>Y slice</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            <input
+              type="range"
+              min={extentsRef.current.yMinAll}
+              max={extentsRef.current.yMaxAll}
+              step={1}
+              value={yMin}
+              onChange={(e) =>
+                setYMin(
+                  clamp(parseFloat(e.currentTarget.value), extentsRef.current.yMinAll, yMax)
+                )
+              }
+            />
+            <input
+              type="range"
+              min={extentsRef.current.yMinAll}
+              max={extentsRef.current.yMaxAll}
+              step={1}
+              value={yMax}
+              onChange={(e) =>
+                setYMax(
+                  clamp(parseFloat(e.currentTarget.value), yMin, extentsRef.current.yMaxAll)
+                )
+              }
+            />
+          </div>
+          <span style={{ opacity: 0.8 }}>
+            {yMin.toFixed(0)} ~ {yMax.toFixed(0)}
+          </span>
+
+          <label>Z slice</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            <input
+              type="range"
+              min={extentsRef.current.zMinBase * spacing}
+              max={extentsRef.current.zMaxBase * spacing}
+              step={0.5}
+              value={zMin}
+              onChange={(e) =>
+                setZMin(
+                  clamp(
+                    parseFloat(e.currentTarget.value),
+                    extentsRef.current.zMinBase * spacing,
+                    zMax
+                  )
+                )
+              }
+            />
+            <input
+              type="range"
+              min={extentsRef.current.zMinBase * spacing}
+              max={extentsRef.current.zMaxBase * spacing}
+              step={0.5}
+              value={zMax}
+              onChange={(e) =>
+                setZMax(
+                  clamp(
+                    parseFloat(e.currentTarget.value),
+                    zMin,
+                    extentsRef.current.zMaxBase * spacing
+                  )
+                )
+              }
+            />
+          </div>
+          <span style={{ opacity: 0.8 }}>
+            {zMin.toFixed(1)} ~ {zMax.toFixed(1)}
+          </span>
         </div>
-        <span style={{ opacity: 0.8 }}>
-          {zMin.toFixed(1)} ~ {zMax.toFixed(1)}
-        </span>
-      </div>
+      )}
 
       {/* Status Log */}
-      <pre
-        style={{
-          position: "fixed",
-          bottom: 10,
-          left: 10,
-          right: 10,
-          zIndex: 10,
-          background: "rgba(0,0,0,.4)",
-          padding: "8px 10px",
-          borderRadius: 8,
-          fontSize: 12,
-          whiteSpace: "pre-wrap",
-          maxHeight: "28vh",
-          overflow: "auto",
-        }}
-      >
-        {status}
-      </pre>
+      {showUI && (
+        <pre
+          style={{
+            position: "fixed",
+            bottom: 10,
+            left: 10,
+            right: 10,
+            zIndex: 10,
+            background: "rgba(0,0,0,.4)",
+            padding: "8px 10px",
+            borderRadius: 8,
+            fontSize: 12,
+            whiteSpace: "pre-wrap",
+            maxHeight: "28vh",
+            overflow: "auto",
+          }}
+        >
+          {status}
+        </pre>
+      )}
 
       {/* Hidden sampling canvas & video */}
       <canvas ref={hiddenCanvasRef} style={{ display: "none" }} />
