@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -13,7 +13,9 @@ export default function Page() {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const cameraRef = useRef<
+    THREE.PerspectiveCamera | THREE.OrthographicCamera | null
+  >(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
@@ -31,10 +33,20 @@ export default function Page() {
   const [targetFrames, setTargetFrames] = useState<number>(60);
 
   // Visual controls
-  const [spacing, setSpacing] = useState<number>(2);        // 프레임 간 z 간격 (기본 2)
-  const [pointSize, setPointSize] = useState<number>(0.8);  // 포인트 크기 (shader uniform)
-  const [opacity, setOpacity] = useState<number>(1.0);      // 포인트 불투명도
+  const [spacing, setSpacing] = useState<number>(2); // 프레임 간 z 간격 (기본 2)
+  const [pointSize, setPointSize] = useState<number>(0.8); // 포인트 크기 (shader uniform)
+  const [opacity, setOpacity] = useState<number>(1.0); // 포인트 불투명도
   const [sizeAttenuation, setSizeAttenuation] = useState<boolean>(true);
+  const [useOrthographic, setUseOrthographic] = useState<boolean>(false);
+  const [cameraPosition, setCameraPosition] = useState<{
+    x: number;
+    y: number;
+    z: number;
+  }>(() => ({
+    x: 0,
+    y: 0,
+    z: 180,
+  }));
   const [showUI, setShowUI] = useState<boolean>(true);
 
   // Slice ranges (object space; z range uses spacing-applied units)
@@ -54,10 +66,176 @@ export default function Page() {
     zMinBase: -30, // spacing 적용 전 기본 프레임 범위
     zMaxBase: 30,
   });
+  const orthoSizeRef = useRef<number>(200);
+  const initialCameraModeRef = useRef<boolean>(useOrthographic);
+
+  const updateCameraPositionState = useCallback(() => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const { x, y, z } = camera.position;
+    setCameraPosition((prev) => {
+      if (
+        Math.abs(prev.x - x) < 1e-4 &&
+        Math.abs(prev.y - y) < 1e-4 &&
+        Math.abs(prev.z - z) < 1e-4
+      ) {
+        return prev;
+      }
+      return { x, y, z };
+    });
+  }, [setCameraPosition]);
 
   const hasRVFC = useMemo(
-    () => typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype,
+    () =>
+      typeof HTMLVideoElement !== "undefined" &&
+      "requestVideoFrameCallback" in HTMLVideoElement.prototype,
     []
+  );
+
+  const configureCamera = useCallback(
+    (useOrtho: boolean) => {
+      if (!mountRef.current || !rendererRef.current) return;
+
+      const width = mountRef.current.clientWidth || 1;
+      const height = mountRef.current.clientHeight || 1;
+      const aspect = width / Math.max(height, 1e-6);
+      const previous = cameraRef.current;
+
+      let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+
+      if (useOrtho) {
+        let frustumHeight = orthoSizeRef.current;
+        if (previous instanceof THREE.PerspectiveCamera) {
+          const distance = previous.position.length();
+          const fovRad = THREE.MathUtils.degToRad(previous.fov);
+          frustumHeight =
+            (2 * distance * Math.tan(fovRad / 2)) /
+            Math.max(previous.zoom, 1e-3);
+        } else if (previous instanceof THREE.OrthographicCamera) {
+          frustumHeight = previous.top - previous.bottom;
+        }
+        orthoSizeRef.current = frustumHeight;
+        const frustumWidth = frustumHeight * aspect;
+        const orthoCam = new THREE.OrthographicCamera(
+          -frustumWidth / 2,
+          frustumWidth / 2,
+          frustumHeight / 2,
+          -frustumHeight / 2,
+          0.1,
+          2000
+        );
+        if (previous instanceof THREE.OrthographicCamera) {
+          orthoCam.zoom = previous.zoom;
+        }
+        camera = orthoCam;
+      } else {
+        let fov = 50;
+        if (previous instanceof THREE.OrthographicCamera) {
+          const distance = previous.position.length();
+          const heightUsed =
+            (previous.top - previous.bottom) / Math.max(previous.zoom, 1e-3);
+          if (distance > 1e-3) {
+            fov = THREE.MathUtils.radToDeg(
+              2 * Math.atan((heightUsed * 0.5) / distance)
+            );
+          }
+        } else if (previous instanceof THREE.PerspectiveCamera) {
+          fov = previous.fov;
+        }
+        const perspectiveCam = new THREE.PerspectiveCamera(
+          fov,
+          aspect,
+          0.1,
+          2000
+        );
+        if (previous instanceof THREE.PerspectiveCamera) {
+          perspectiveCam.zoom = previous.zoom;
+        }
+        camera = perspectiveCam;
+      }
+
+      if (previous) {
+        camera.position.copy(previous.position);
+        camera.quaternion.copy(previous.quaternion);
+        camera.up.copy(previous.up);
+      } else {
+        camera.position.set(0, 0, 180);
+      }
+
+      if (camera instanceof THREE.PerspectiveCamera) {
+        const distance = camera.position.length();
+        orthoSizeRef.current =
+          (2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) /
+          Math.max(camera.zoom, 1e-3);
+      } else if (camera instanceof THREE.OrthographicCamera) {
+        orthoSizeRef.current = camera.top - camera.bottom;
+      }
+
+      camera.updateProjectionMatrix();
+      cameraRef.current = camera;
+
+      const currentControls = controlsRef.current;
+      if (currentControls) {
+        const target = currentControls.target.clone();
+        currentControls.object = camera;
+        currentControls.enableDamping = false;
+        currentControls.dampingFactor = 0;
+        currentControls.target.copy(target);
+        currentControls.update();
+      } else {
+        const controls = new OrbitControls(
+          camera,
+          rendererRef.current.domElement
+        );
+        controls.enableDamping = false;
+        controls.dampingFactor = 0;
+        controls.addEventListener("change", updateCameraPositionState);
+        controlsRef.current = controls;
+      }
+      updateCameraPositionState();
+    },
+    [updateCameraPositionState]
+  );
+
+  const snapCameraToAxis = useCallback(
+    (axis: "x" | "y" | "z") => {
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
+      if (!camera || !controls) return;
+
+      const distance = camera.position.length() || 200;
+      const newPos = new THREE.Vector3();
+
+      switch (axis) {
+        case "x":
+          newPos.set(distance, 0, 0);
+          break;
+        case "y":
+          newPos.set(0, distance, 0);
+          break;
+        case "z":
+        default:
+          newPos.set(0, 0, distance);
+          break;
+      }
+
+      camera.position.copy(newPos);
+      controls.target.set(0, 0, 0);
+      camera.lookAt(controls.target);
+      controls.update();
+      updateCameraPositionState();
+    },
+    [updateCameraPositionState]
+  );
+
+  const setCameraPositionAxis = useCallback(
+    (axis: "x" | "y" | "z", value: number) => {
+      setCameraPosition((prev) => {
+        if (prev[axis] === value) return prev;
+        return { ...prev, [axis]: value };
+      });
+    },
+    [setCameraPosition]
   );
 
   useEffect(() => {
@@ -66,7 +244,10 @@ export default function Page() {
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+    renderer.setSize(
+      mountRef.current.clientWidth,
+      mountRef.current.clientHeight
+    );
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -75,28 +256,27 @@ export default function Page() {
     scene.background = new THREE.Color(0x111111);
     sceneRef.current = scene;
 
-    // Camera
-    const camera = new THREE.PerspectiveCamera(
-      50,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
-      0.1,
-      2000
-    );
-    camera.position.set(0, 0, 180);
-    cameraRef.current = camera;
-
-    // Controls
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controlsRef.current = controls;
+    // Camera + controls
+    configureCamera(initialCameraModeRef.current);
 
     // Resize handler
     const onResize = () => {
-      if (!rendererRef.current || !cameraRef.current || !mountRef.current) return;
+      if (!rendererRef.current || !cameraRef.current || !mountRef.current)
+        return;
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
       rendererRef.current.setSize(w, h);
-      cameraRef.current.aspect = w / h;
+      const aspect = w / Math.max(h, 1);
+      if (cameraRef.current instanceof THREE.PerspectiveCamera) {
+        cameraRef.current.aspect = aspect;
+      } else if (cameraRef.current instanceof THREE.OrthographicCamera) {
+        const frustumHeight = orthoSizeRef.current;
+        const frustumWidth = frustumHeight * aspect;
+        cameraRef.current.left = -frustumWidth / 2;
+        cameraRef.current.right = frustumWidth / 2;
+        cameraRef.current.top = frustumHeight / 2;
+        cameraRef.current.bottom = -frustumHeight / 2;
+      }
       cameraRef.current.updateProjectionMatrix();
     };
     window.addEventListener("resize", onResize);
@@ -105,8 +285,11 @@ export default function Page() {
     let raf = 0;
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      controls.update();
-      renderer.render(scene, camera);
+      controlsRef.current?.update();
+      const camera = cameraRef.current;
+      if (camera) {
+        renderer.render(scene, camera);
+      }
     };
     loop();
 
@@ -122,7 +305,11 @@ export default function Page() {
         pointsRef.current = null;
       }
 
-      controls.dispose();
+      const controls = controlsRef.current;
+      if (controls) {
+        controls.removeEventListener("change", updateCameraPositionState);
+        controls.dispose();
+      }
       renderer.dispose();
 
       if (renderer.domElement && renderer.domElement.parentElement) {
@@ -135,7 +322,27 @@ export default function Page() {
       rendererRef.current = null;
       controlsRef.current = null;
     };
-  }, []);
+  }, [configureCamera, updateCameraPositionState]);
+
+  useEffect(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    if (
+      Math.abs(camera.position.x - cameraPosition.x) < 1e-4 &&
+      Math.abs(camera.position.y - cameraPosition.y) < 1e-4 &&
+      Math.abs(camera.position.z - cameraPosition.z) < 1e-4
+    ) {
+      return;
+    }
+    camera.position.set(
+      cameraPosition.x,
+      cameraPosition.y,
+      cameraPosition.z
+    );
+    camera.lookAt(controls.target);
+    controls.update();
+  }, [cameraPosition]);
 
   // Reflect visual controls to the existing material/points immediately
   useEffect(() => {
@@ -154,7 +361,8 @@ export default function Page() {
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.uOpacity.value = opacity;
-      materialRef.current.transparent = opacity < 1.0 || materialRef.current.transparent; // 투명도 필요 시 활성화
+      materialRef.current.transparent =
+        opacity < 1.0 || materialRef.current.transparent; // 투명도 필요 시 활성화
       materialRef.current.needsUpdate = true;
     }
   }, [opacity]);
@@ -188,12 +396,17 @@ export default function Page() {
     }
   }, [zMin, zMax]);
 
+  useEffect(() => {
+    if (!rendererRef.current) return;
+    configureCamera(useOrthographic);
+  }, [configureCamera, useOrthographic]);
+
   // Helpers
   function log(msg: string) {
     setStatus(msg);
   }
   function append(msg: string) {
-    setStatus(prev => (prev ? prev + "\n" + msg : msg));
+    setStatus((prev) => (prev ? prev + "\n" + msg : msg));
   }
 
   function revokeObjURL() {
@@ -203,12 +416,12 @@ export default function Page() {
 
   async function waitVideoFrame(video: HTMLVideoElement) {
     if (hasRVFC) {
-      await new Promise<void>(resolve => {
+      await new Promise<void>((resolve) => {
         video.requestVideoFrameCallback(() => resolve());
       });
       return;
     }
-    await new Promise<void>(resolve => {
+    await new Promise<void>((resolve) => {
       const onTimeUpdate = () => {
         video.removeEventListener("timeupdate", onTimeUpdate);
         resolve();
@@ -235,11 +448,12 @@ export default function Page() {
     const ctx = hidden.getContext("2d", { willReadFrequently: true })!;
 
     await video.play().catch(() => {});
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     video.pause();
 
     const duration = video.duration;
-    if (!isFinite(duration) || duration <= 0) throw new Error("비디오 duration을 읽지 못했습니다.");
+    if (!isFinite(duration) || duration <= 0)
+      throw new Error("비디오 duration을 읽지 못했습니다.");
 
     hidden.width = targetW;
     hidden.height = targetH;
@@ -265,7 +479,7 @@ export default function Page() {
       // z는 기본 단위 1로 저장하고, 실제 간격은 shader uniform(uZScale)로 제어
 
       for (let y = 0; y < targetH; y++) {
-        const yVal = ((targetH - 1) / 2) - y;
+        const yVal = (targetH - 1) / 2 - y;
         for (let x = 0; x < targetW; x++) {
           const p = (y * targetW + x) * 4;
           const r = data[p] / 255;
@@ -276,7 +490,7 @@ export default function Page() {
 
           positions[idx] = (x - (targetW - 1) / 2) * sx;
           positions[idx + 1] = yVal * sy;
-          positions[idx + 2] = (f - (targetFrames - 1) / 2); // z 기본단위 1
+          positions[idx + 2] = f - (targetFrames - 1) / 2; // z 기본단위 1
 
           colors[idx] = r;
           colors[idx + 1] = g;
@@ -289,12 +503,12 @@ export default function Page() {
     }
 
     // Update extents for slicers
-    extentsRef.current.xMinAll = - (targetW - 1) / 2;
-    extentsRef.current.xMaxAll =   (targetW - 1) / 2;
-    extentsRef.current.yMinAll = - (targetH - 1) / 2;
-    extentsRef.current.yMaxAll =   (targetH - 1) / 2;
-    extentsRef.current.zMinBase = - (targetFrames - 1) / 2; // spacing 적용 전
-    extentsRef.current.zMaxBase =   (targetFrames - 1) / 2;
+    extentsRef.current.xMinAll = -(targetW - 1) / 2;
+    extentsRef.current.xMaxAll = (targetW - 1) / 2;
+    extentsRef.current.yMinAll = -(targetH - 1) / 2;
+    extentsRef.current.yMaxAll = (targetH - 1) / 2;
+    extentsRef.current.zMinBase = -(targetFrames - 1) / 2; // spacing 적용 전
+    extentsRef.current.zMaxBase = (targetFrames - 1) / 2;
 
     setXMin(extentsRef.current.xMinAll);
     setXMax(extentsRef.current.xMaxAll);
@@ -306,7 +520,10 @@ export default function Page() {
     return { positions, colors };
   }
 
-  function visualize(buffers: { positions: Float32Array; colors: Float32Array }) {
+  function visualize(buffers: {
+    positions: Float32Array;
+    colors: Float32Array;
+  }) {
     const scene = sceneRef.current!;
     const camera = cameraRef.current!;
 
@@ -319,8 +536,14 @@ export default function Page() {
     }
 
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(buffers.positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(buffers.colors, 3));
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(buffers.positions, 3)
+    );
+    geometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(buffers.colors, 3)
+    );
 
     const vertexShader = `
       attribute vec3 color;
@@ -383,11 +606,12 @@ export default function Page() {
     scene.add(points);
 
     pointsRef.current = points;
-    materialRef.current = material;
+   materialRef.current = material;
 
-    camera.position.set(0, 0, 180);
-    controlsRef.current?.target.set(0, 0, 0);
-    controlsRef.current?.update();
+   camera.position.set(0, 0, 180);
+   controlsRef.current?.target.set(0, 0, 0);
+   controlsRef.current?.update();
+    updateCameraPositionState();
   }
 
   // spacing 변경 시 slicer 범위를 유효 범위에 맞게 자동 조정
@@ -395,16 +619,24 @@ export default function Page() {
     const { zMinBase, zMaxBase } = extentsRef.current;
     const minLegal = zMinBase * spacing;
     const maxLegal = zMaxBase * spacing;
-    setZMin(prev => (prev < minLegal ? minLegal : prev));
-    setZMax(prev => (prev > maxLegal ? maxLegal : prev));
+    setZMin((prev) => (prev < minLegal ? minLegal : prev));
+    setZMax((prev) => (prev > maxLegal ? maxLegal : prev));
   }, [spacing]);
 
-  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+  const clamp = (v: number, a: number, b: number) =>
+    Math.max(a, Math.min(b, v));
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#111", color: "#eee" }}>
+    <div
+      style={{
+        width: "100vw",
+        height: "100vh",
+        background: "#111",
+        color: "#eee",
+      }}
+    >
       <button
-        onClick={() => setShowUI(prev => !prev)}
+        onClick={() => setShowUI((prev) => !prev)}
         style={{
           position: "fixed",
           top: 10,
@@ -463,7 +695,9 @@ export default function Page() {
               min={8}
               step={8}
               style={{ width: 70 }}
-              onChange={(e) => setTargetW(parseInt(e.currentTarget.value || "128", 10))}
+              onChange={(e) =>
+                setTargetW(parseInt(e.currentTarget.value || "128", 10))
+              }
             />
             <input
               type="number"
@@ -471,7 +705,9 @@ export default function Page() {
               min={8}
               step={8}
               style={{ width: 70 }}
-              onChange={(e) => setTargetH(parseInt(e.currentTarget.value || "72", 10))}
+              onChange={(e) =>
+                setTargetH(parseInt(e.currentTarget.value || "72", 10))
+              }
             />
           </div>
 
@@ -482,9 +718,119 @@ export default function Page() {
             min={2}
             step={1}
             style={{ width: 70 }}
-            onChange={(e) => setTargetFrames(parseInt(e.currentTarget.value || "60", 10))}
+            onChange={(e) =>
+              setTargetFrames(parseInt(e.currentTarget.value || "60", 10))
+            }
           />
           <span />
+
+          <label>카메라</label>
+          <button
+            onClick={() => setUseOrthographic((prev) => !prev)}
+            style={{
+              gridColumn: "2 / -1",
+              background: "rgba(0,0,0,.6)",
+              color: "#eee",
+              border: "1px solid rgba(255,255,255,.25)",
+              borderRadius: 6,
+              padding: "6px 10px",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            {useOrthographic ? "직교 (Orthographic)" : "원근 (Perspective)"}
+          </button>
+
+          <span />
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              gridColumn: "2 / -1",
+            }}
+          >
+            <button
+              onClick={() => snapCameraToAxis("x")}
+              style={{
+                flex: 1,
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              X축
+            </button>
+            <button
+              onClick={() => snapCameraToAxis("y")}
+              style={{
+                flex: 1,
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Y축
+            </button>
+            <button
+              onClick={() => snapCameraToAxis("z")}
+              style={{
+                flex: 1,
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Z축
+            </button>
+          </div>
+
+          <label>카메라 X</label>
+          <input
+            type="range"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.x}
+            onChange={(e) =>
+              setCameraPositionAxis("x", parseFloat(e.currentTarget.value))
+            }
+          />
+          <span style={{ opacity: 0.8 }}>{cameraPosition.x.toFixed(1)}</span>
+
+          <label>카메라 Y</label>
+          <input
+            type="range"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.y}
+            onChange={(e) =>
+              setCameraPositionAxis("y", parseFloat(e.currentTarget.value))
+            }
+          />
+          <span style={{ opacity: 0.8 }}>{cameraPosition.y.toFixed(1)}</span>
+
+          <label>카메라 Z</label>
+          <input
+            type="range"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.z}
+            onChange={(e) =>
+              setCameraPositionAxis("z", parseFloat(e.currentTarget.value))
+            }
+          />
+          <span style={{ opacity: 0.8 }}>{cameraPosition.z.toFixed(1)}</span>
 
           {/* Visual controls */}
           <label>Spacing (z)</label>
@@ -502,7 +848,7 @@ export default function Page() {
           <input
             type="range"
             min={0.1}
-            max={5}
+            max={20}
             step={0.1}
             value={pointSize}
             onChange={(e) => setPointSize(parseFloat(e.currentTarget.value))}
@@ -532,7 +878,9 @@ export default function Page() {
           <span />
 
           <label>X slice</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}
+          >
             <input
               type="range"
               min={extentsRef.current.xMinAll}
@@ -541,7 +889,11 @@ export default function Page() {
               value={xMin}
               onChange={(e) =>
                 setXMin(
-                  clamp(parseFloat(e.currentTarget.value), extentsRef.current.xMinAll, xMax)
+                  clamp(
+                    parseFloat(e.currentTarget.value),
+                    extentsRef.current.xMinAll,
+                    xMax
+                  )
                 )
               }
             />
@@ -553,7 +905,11 @@ export default function Page() {
               value={xMax}
               onChange={(e) =>
                 setXMax(
-                  clamp(parseFloat(e.currentTarget.value), xMin, extentsRef.current.xMaxAll)
+                  clamp(
+                    parseFloat(e.currentTarget.value),
+                    xMin,
+                    extentsRef.current.xMaxAll
+                  )
                 )
               }
             />
@@ -563,7 +919,9 @@ export default function Page() {
           </span>
 
           <label>Y slice</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}
+          >
             <input
               type="range"
               min={extentsRef.current.yMinAll}
@@ -572,7 +930,11 @@ export default function Page() {
               value={yMin}
               onChange={(e) =>
                 setYMin(
-                  clamp(parseFloat(e.currentTarget.value), extentsRef.current.yMinAll, yMax)
+                  clamp(
+                    parseFloat(e.currentTarget.value),
+                    extentsRef.current.yMinAll,
+                    yMax
+                  )
                 )
               }
             />
@@ -584,7 +946,11 @@ export default function Page() {
               value={yMax}
               onChange={(e) =>
                 setYMax(
-                  clamp(parseFloat(e.currentTarget.value), yMin, extentsRef.current.yMaxAll)
+                  clamp(
+                    parseFloat(e.currentTarget.value),
+                    yMin,
+                    extentsRef.current.yMaxAll
+                  )
                 )
               }
             />
@@ -594,7 +960,9 @@ export default function Page() {
           </span>
 
           <label>Z slice</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}
+          >
             <input
               type="range"
               min={extentsRef.current.zMinBase * spacing}
@@ -639,12 +1007,20 @@ export default function Page() {
                   log("먼저 비디오를 선택해 주세요.");
                   return;
                 }
-                log(`샘플링 시작: ${targetW}×${targetH}, ${targetFrames} frames`);
-                const buffers = await sampleVideoToBuffers({ targetW, targetH, targetFrames });
+                log(
+                  `샘플링 시작: ${targetW}×${targetH}, ${targetFrames} frames`
+                );
+                const buffers = await sampleVideoToBuffers({
+                  targetW,
+                  targetH,
+                  targetFrames,
+                });
                 visualize(buffers);
                 append("시각화 완료.");
               } catch (err: unknown) {
-                append("에러: " + (err instanceof Error ? err.message : String(err)));
+                append(
+                  "에러: " + (err instanceof Error ? err.message : String(err))
+                );
               }
             }}
             style={{ gridColumn: "1 / -1" }}
@@ -667,7 +1043,7 @@ export default function Page() {
           >
             초기화
           </button>
-      </div>
+        </div>
       )}
 
       {/* Status Log */}
