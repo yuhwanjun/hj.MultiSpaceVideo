@@ -28,14 +28,14 @@ export default function Page() {
   const [objURL, setObjURL] = useState<string | null>(null);
 
   // Sampling controls
-  const [targetW, setTargetW] = useState<number>(128);
-  const [targetH, setTargetH] = useState<number>(72);
-  const [targetFrames, setTargetFrames] = useState<number>(60);
+  const [targetW, setTargetW] = useState<number>(256);
+  const [targetH, setTargetH] = useState<number>(256);
+  const [targetFrames, setTargetFrames] = useState<number>(200);
 
   // Visual controls
-  const [spacing, setSpacing] = useState<number>(2); // 프레임 간 z 간격 (기본 2)
-  const [pointSize, setPointSize] = useState<number>(0.8); // 포인트 크기 (shader uniform)
-  const [opacity, setOpacity] = useState<number>(1.0); // 포인트 불투명도
+  const [spacing, setSpacing] = useState<number>(0.1); // 프레임 간 z 간격 (기본 2)
+  const [pointSize, setPointSize] = useState<number>(1.5); // 포인트 크기 (shader uniform)
+  const [opacity, setOpacity] = useState<number>(0.05); // 포인트 불투명도
   const [sizeAttenuation, setSizeAttenuation] = useState<boolean>(true);
   const [useOrthographic, setUseOrthographic] = useState<boolean>(false);
   const [cameraPosition, setCameraPosition] = useState<{
@@ -45,8 +45,9 @@ export default function Page() {
   }>(() => ({
     x: 0,
     y: 0,
-    z: 180,
+    z: 200,
   }));
+  const [cameraZoom, setCameraZoom] = useState<number>(1);
   const [showUI, setShowUI] = useState<boolean>(true);
 
   // Slice ranges (object space; z range uses spacing-applied units)
@@ -83,7 +84,9 @@ export default function Page() {
       }
       return { x, y, z };
     });
-  }, [setCameraPosition]);
+    const currentZoom = camera.zoom;
+    setCameraZoom((prev) => (Math.abs(prev - currentZoom) < 1e-4 ? prev : currentZoom));
+  }, [setCameraPosition, setCameraZoom]);
 
   const hasRVFC = useMemo(
     () =>
@@ -197,35 +200,52 @@ export default function Page() {
     [updateCameraPositionState]
   );
 
-  const snapCameraToAxis = useCallback(
-    (axis: "x" | "y" | "z") => {
-      const camera = cameraRef.current;
-      const controls = controlsRef.current;
-      if (!camera || !controls) return;
-
-      const distance = camera.position.length() || 200;
-      const newPos = new THREE.Vector3();
-
-      switch (axis) {
-        case "x":
-          newPos.set(distance, 0, 0);
+  const moveCameraTo = useCallback(
+    (dir: "front" | "back" | "left" | "right" | "top" | "bottom") => {
+      const d = 200;
+      let x = 0,
+        y = 0,
+        z = 0;
+      switch (dir) {
+        case "front":
+          x = 0;
+          y = 0;
+          z = d;
           break;
-        case "y":
-          newPos.set(0, distance, 0);
+        case "back":
+          x = 0;
+          y = 0;
+          z = -d;
           break;
-        case "z":
-        default:
-          newPos.set(0, 0, distance);
+        case "left":
+          x = -d;
+          y = 0;
+          z = 0;
+          break;
+        case "right":
+          x = d;
+          y = 0;
+          z = 0;
+          break;
+        case "top":
+          x = 0;
+          y = d;
+          z = 0;
+          break;
+        case "bottom":
+          x = 0;
+          y = -d;
+          z = 0;
           break;
       }
-
-      camera.position.copy(newPos);
-      controls.target.set(0, 0, 0);
-      camera.lookAt(controls.target);
-      controls.update();
-      updateCameraPositionState();
+      setCameraPosition({ x, y, z });
+      const controls = controlsRef.current;
+      if (controls) {
+        controls.target.set(0, 0, 0);
+        controls.update();
+      }
     },
-    [updateCameraPositionState]
+    [setCameraPosition]
   );
 
   const setCameraPositionAxis = useCallback(
@@ -242,18 +262,19 @@ export default function Page() {
     if (!mountRef.current) return;
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(
       mountRef.current.clientWidth,
       mountRef.current.clientHeight
     );
+    renderer.setClearColor(0x000000, 0);
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
     // Scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x111111);
+    scene.background = null;
     sceneRef.current = scene;
 
     // Camera + controls
@@ -344,6 +365,17 @@ export default function Page() {
     controls.update();
   }, [cameraPosition]);
 
+  // Reflect zoom state to camera
+  useEffect(() => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const z = Math.max(0.01, cameraZoom);
+    if (Math.abs(camera.zoom - z) < 1e-4) return;
+    camera.zoom = z;
+    camera.updateProjectionMatrix();
+    controlsRef.current?.update();
+  }, [cameraZoom]);
+
   // Reflect visual controls to the existing material/points immediately
   useEffect(() => {
     if (!materialRef.current) return;
@@ -407,6 +439,19 @@ export default function Page() {
   }
   function append(msg: string) {
     setStatus((prev) => (prev ? prev + "\n" + msg : msg));
+  }
+
+  function saveCanvasAsPNG(filename = "capture.png") {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const canvas = renderer.domElement as HTMLCanvasElement;
+    const url = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   function revokeObjURL() {
@@ -631,7 +676,7 @@ export default function Page() {
       style={{
         width: "100vw",
         height: "100vh",
-        background: "#111",
+        background: "transparent",
         color: "#eee",
       }}
     >
@@ -744,15 +789,15 @@ export default function Page() {
           <span />
           <div
             style={{
-              display: "flex",
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
               gap: 6,
               gridColumn: "2 / -1",
             }}
           >
             <button
-              onClick={() => snapCameraToAxis("x")}
+              onClick={() => moveCameraTo("front")}
               style={{
-                flex: 1,
                 background: "rgba(0,0,0,.6)",
                 color: "#eee",
                 border: "1px solid rgba(255,255,255,.25)",
@@ -761,12 +806,11 @@ export default function Page() {
                 cursor: "pointer",
               }}
             >
-              X축
+              Front
             </button>
             <button
-              onClick={() => snapCameraToAxis("y")}
+              onClick={() => moveCameraTo("back")}
               style={{
-                flex: 1,
                 background: "rgba(0,0,0,.6)",
                 color: "#eee",
                 border: "1px solid rgba(255,255,255,.25)",
@@ -775,12 +819,11 @@ export default function Page() {
                 cursor: "pointer",
               }}
             >
-              Y축
+              Back
             </button>
             <button
-              onClick={() => snapCameraToAxis("z")}
+              onClick={() => moveCameraTo("left")}
               style={{
-                flex: 1,
                 background: "rgba(0,0,0,.6)",
                 color: "#eee",
                 border: "1px solid rgba(255,255,255,.25)",
@@ -789,7 +832,46 @@ export default function Page() {
                 cursor: "pointer",
               }}
             >
-              Z축
+              Left
+            </button>
+            <button
+              onClick={() => moveCameraTo("right")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Right
+            </button>
+            <button
+              onClick={() => moveCameraTo("top")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Top
+            </button>
+            <button
+              onClick={() => moveCameraTo("bottom")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Bottom
             </button>
           </div>
 
@@ -804,7 +886,20 @@ export default function Page() {
               setCameraPositionAxis("x", parseFloat(e.currentTarget.value))
             }
           />
-          <span style={{ opacity: 0.8 }}>{cameraPosition.x.toFixed(1)}</span>
+          <input
+            type="number"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.x}
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              if (!Number.isNaN(v)) {
+                setCameraPositionAxis("x", clamp(v, -500, 500));
+              }
+            }}
+            style={{ width: 70 }}
+          />
 
           <label>카메라 Y</label>
           <input
@@ -817,7 +912,20 @@ export default function Page() {
               setCameraPositionAxis("y", parseFloat(e.currentTarget.value))
             }
           />
-          <span style={{ opacity: 0.8 }}>{cameraPosition.y.toFixed(1)}</span>
+          <input
+            type="number"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.y}
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              if (!Number.isNaN(v)) {
+                setCameraPositionAxis("y", clamp(v, -500, 500));
+              }
+            }}
+            style={{ width: 70 }}
+          />
 
           <label>카메라 Z</label>
           <input
@@ -830,7 +938,31 @@ export default function Page() {
               setCameraPositionAxis("z", parseFloat(e.currentTarget.value))
             }
           />
-          <span style={{ opacity: 0.8 }}>{cameraPosition.z.toFixed(1)}</span>
+          <input
+            type="number"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.z}
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              if (!Number.isNaN(v)) {
+                setCameraPositionAxis("z", clamp(v, -500, 500));
+              }
+            }}
+            style={{ width: 70 }}
+          />
+
+          <label>Zoom</label>
+          <input
+            type="range"
+            min={0.1}
+            max={10}
+            step={0.05}
+            value={cameraZoom}
+            onChange={(e) => setCameraZoom(parseFloat(e.currentTarget.value))}
+          />
+          <span style={{ opacity: 0.8 }}>{cameraZoom.toFixed(2)}</span>
 
           {/* Visual controls */}
           <label>Spacing (z)</label>
@@ -1042,6 +1174,13 @@ export default function Page() {
             }}
           >
             초기화
+          </button>
+
+          <button
+            onClick={() => saveCanvasAsPNG("capture.png")}
+            style={{ gridColumn: "1 / -1" }}
+          >
+            PNG로 저장
           </button>
         </div>
       )}
