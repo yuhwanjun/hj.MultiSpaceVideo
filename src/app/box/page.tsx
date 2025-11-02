@@ -35,7 +35,7 @@ export default function Page() {
   // Visual controls
   const [spacing, setSpacing] = useState<number>(0.1); // 프레임 간 z 간격 (기본 2)
   const [pointSize, setPointSize] = useState<number>(1.5); // 포인트 크기 (shader uniform)
-  const [opacity, setOpacity] = useState<number>(0.05); // 포인트 불투명도
+  const [opacity, setOpacity] = useState<number>(1); // 포인트 불투명도
   const [sizeAttenuation, setSizeAttenuation] = useState<boolean>(true);
   const [useOrthographic, setUseOrthographic] = useState<boolean>(false);
   const [cameraPosition, setCameraPosition] = useState<{
@@ -124,8 +124,8 @@ export default function Page() {
           frustumWidth / 2,
           frustumHeight / 2,
           -frustumHeight / 2,
-          0.1,
-          2000
+          0.001,
+          8000
         );
         if (previous instanceof THREE.OrthographicCamera) {
           orthoCam.zoom = previous.zoom;
@@ -393,8 +393,8 @@ export default function Page() {
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.uOpacity.value = opacity;
-      materialRef.current.transparent =
-        opacity < 1.0 || materialRef.current.transparent; // 투명도 필요 시 활성화
+      materialRef.current.transparent = true;
+      materialRef.current.depthWrite = true; // 항상 유지
       materialRef.current.needsUpdate = true;
     }
   }, [opacity]);
@@ -612,9 +612,12 @@ export default function Page() {
         gl_Position = projectionMatrix * mvPosition;
         float size = uSize;
         if (uAttenuate) {
-          size = uSize * (300.0 / -mvPosition.z);
+          // 방향(앞/뒤)에 관계없이 양수 거리 사용 + 너무 작아지지 않도록 최소값 보장
+          float denom = max(1.0, abs(mvPosition.z));
+          size = uSize * (300.0 / denom);
         }
-        gl_PointSize = size;
+        // 너무 작아지는 것을 방지
+        gl_PointSize = max(0.1, size);
       }
     `;
 
@@ -632,9 +635,10 @@ export default function Page() {
     const material = new THREE.ShaderMaterial({
       vertexShader,
       fragmentShader,
-      transparent: opacity < 1.0,
+      transparent: true,        // 불투명도 제어 유지
       depthTest: true,
-      depthWrite: opacity >= 1.0,
+      depthWrite: true,         // 항상 깊이 버퍼 갱신 (중요)
+      alphaTest: 0.001,         // 선택: 아주 낮은 알파는 버려 정렬 이슈 완화
       uniforms: {
         uSize: { value: pointSize },
         uAttenuate: { value: sizeAttenuation },
@@ -878,8 +882,8 @@ export default function Page() {
           <label>카메라 X</label>
           <input
             type="range"
-            min={-500}
-            max={500}
+            min={-1500}
+            max={1500}
             step={1}
             value={cameraPosition.x}
             onChange={(e) =>
@@ -888,14 +892,14 @@ export default function Page() {
           />
           <input
             type="number"
-            min={-500}
-            max={500}
+            min={-1500}
+            max={1500}
             step={1}
             value={cameraPosition.x}
             onChange={(e) => {
               const v = parseFloat(e.currentTarget.value);
               if (!Number.isNaN(v)) {
-                setCameraPositionAxis("x", clamp(v, -500, 500));
+                setCameraPositionAxis("x", clamp(v, -1500, 1500));
               }
             }}
             style={{ width: 70 }}
@@ -904,8 +908,8 @@ export default function Page() {
           <label>카메라 Y</label>
           <input
             type="range"
-            min={-500}
-            max={500}
+            min={-1500}
+            max={1500}
             step={1}
             value={cameraPosition.y}
             onChange={(e) =>
@@ -914,14 +918,14 @@ export default function Page() {
           />
           <input
             type="number"
-            min={-500}
-            max={500}
+            min={-1500}
+            max={1500}
             step={1}
             value={cameraPosition.y}
             onChange={(e) => {
               const v = parseFloat(e.currentTarget.value);
               if (!Number.isNaN(v)) {
-                setCameraPositionAxis("y", clamp(v, -500, 500));
+                setCameraPositionAxis("y", clamp(v, -1500, 1500));
               }
             }}
             style={{ width: 70 }}
@@ -930,8 +934,8 @@ export default function Page() {
           <label>카메라 Z</label>
           <input
             type="range"
-            min={-500}
-            max={500}
+            min={-1500}
+            max={1500}
             step={1}
             value={cameraPosition.z}
             onChange={(e) =>
@@ -940,14 +944,14 @@ export default function Page() {
           />
           <input
             type="number"
-            min={-500}
-            max={500}
+            min={-1500}
+            max={1500}
             step={1}
             value={cameraPosition.z}
             onChange={(e) => {
               const v = parseFloat(e.currentTarget.value);
               if (!Number.isNaN(v)) {
-                setCameraPositionAxis("z", clamp(v, -500, 500));
+                setCameraPositionAxis("z", clamp(v, -1500, 1500));
               }
             }}
             style={{ width: 70 }}
