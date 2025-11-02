@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import GUI from 'lil-gui';
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 /**
@@ -28,9 +29,9 @@ export default function Page() {
   const [objURL, setObjURL] = useState<string | null>(null);
 
   // Sampling controls
-  const [targetW, setTargetW] = useState<number>(256);
-  const [targetH, setTargetH] = useState<number>(256);
-  const [targetFrames, setTargetFrames] = useState<number>(200);
+  const [targetW, setTargetW] = useState<number>(250);
+  const [targetH, setTargetH] = useState<number>(250);
+  const [targetFrames, setTargetFrames] = useState<number>(600);
 
   // Visual controls
   const [spacing, setSpacing] = useState<number>(0.1); // 프레임 간 z 간격 (기본 2)
@@ -674,6 +675,21 @@ export default function Page() {
 
   const clamp = (v: number, a: number, b: number) =>
     Math.max(a, Math.min(b, v));
+
+//   const { camX, camY, camZ, zoom } = useControls(
+//     "camera", {
+//       camX: { value: 0, min: -1500, max: 1500, step: 1 },
+//       camY: { value: 0, min: -1500, max: 1500, step: 1 },
+//       camZ: { value: 200, min: -1500, max: 1500, step: 1 },
+//       zoom: { value: 1, min: 0.01, max: 10, step: 0.05 },
+//     }
+// );
+
+const gui = new GUI();
+gui.add( document, 'title' );
+//https://lil-gui.georgealways.com/#Guide#Adding-Controllers
+
+
 
   return (
     <div
