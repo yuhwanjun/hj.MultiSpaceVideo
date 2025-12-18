@@ -905,12 +905,27 @@ export default function SparseSurfacePage() {
           top: 10,
           right: 10,
           zIndex: 20,
-          background: "rgba(0,0,0,.7)",
-          color: "#eee",
-          border: "1px solid rgba(255,255,255,.2)",
+          background: showUI ? "rgba(0,0,0,.7)" : "rgba(0,0,0,.0)",
+          color: showUI ? "#eee" : "rgba(255,255,255,.00)",
+          border: showUI ? "1px solid rgba(255,255,255,.00)" : "1px solid rgba(255,255,255,.00)",
           borderRadius: 6,
           padding: "6px 12px",
           cursor: "pointer",
+          transition: "all 0.3s ease",
+        }}
+        onMouseEnter={(e) => {
+          if (!showUI) {
+            e.currentTarget.style.background = "rgba(0,0,0,.1)";
+            e.currentTarget.style.color = "#eee";
+            e.currentTarget.style.border = "1px solid rgba(255,255,255,.1)";
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!showUI) {
+            e.currentTarget.style.background = "rgba(0,0,0,.0)";
+            e.currentTarget.style.color = "rgba(255,255,255,.0)";
+            e.currentTarget.style.border = "1px solid rgba(255,255,255,.0)";
+          }
         }}
       >
         {showUI ? "UI 숨기기" : "UI 보이기"}
