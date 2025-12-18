@@ -462,6 +462,9 @@ export default function SparseSurfacePage() {
     controls.enableDamping = true;
     controls.autoRotate = autoRotate;
     controls.autoRotateSpeed = autoRotateSpeed;
+    // 회전 제한: 뒷면이 보이지 않도록 수평 회전을 -90도 ~ +90도로 제한
+    controls.minAzimuthAngle = -Math.PI / 2;
+    controls.maxAzimuthAngle = Math.PI / 2;
     controlsRef.current = controls;
 
     const onResize = () => {
