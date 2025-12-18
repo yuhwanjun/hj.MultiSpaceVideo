@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import GUI from 'lil-gui';
+import GUI from "lil-gui";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 /**
@@ -86,7 +86,9 @@ export default function Page() {
       return { x, y, z };
     });
     const currentZoom = camera.zoom;
-    setCameraZoom((prev) => (Math.abs(prev - currentZoom) < 1e-4 ? prev : currentZoom));
+    setCameraZoom((prev) =>
+      Math.abs(prev - currentZoom) < 1e-4 ? prev : currentZoom
+    );
   }, [setCameraPosition, setCameraZoom]);
 
   const hasRVFC = useMemo(
@@ -263,7 +265,11 @@ export default function Page() {
     if (!mountRef.current) return;
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true,
+    });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(
       mountRef.current.clientWidth,
@@ -357,11 +363,7 @@ export default function Page() {
     ) {
       return;
     }
-    camera.position.set(
-      cameraPosition.x,
-      cameraPosition.y,
-      cameraPosition.z
-    );
+    camera.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
     camera.lookAt(controls.target);
     controls.update();
   }, [cameraPosition]);
@@ -636,10 +638,10 @@ export default function Page() {
     const material = new THREE.ShaderMaterial({
       vertexShader,
       fragmentShader,
-      transparent: true,        // 불투명도 제어 유지
+      transparent: true, // 불투명도 제어 유지
       depthTest: true,
-      depthWrite: true,         // 항상 깊이 버퍼 갱신 (중요)
-      alphaTest: 0.001,         // 선택: 아주 낮은 알파는 버려 정렬 이슈 완화
+      depthWrite: true, // 항상 깊이 버퍼 갱신 (중요)
+      alphaTest: 0.001, // 선택: 아주 낮은 알파는 버려 정렬 이슈 완화
       uniforms: {
         uSize: { value: pointSize },
         uAttenuate: { value: sizeAttenuation },
@@ -656,11 +658,11 @@ export default function Page() {
     scene.add(points);
 
     pointsRef.current = points;
-   materialRef.current = material;
+    materialRef.current = material;
 
-   camera.position.set(0, 0, 180);
-   controlsRef.current?.target.set(0, 0, 0);
-   controlsRef.current?.update();
+    camera.position.set(0, 0, 180);
+    controlsRef.current?.target.set(0, 0, 0);
+    controlsRef.current?.update();
     updateCameraPositionState();
   }
 
@@ -676,20 +678,18 @@ export default function Page() {
   const clamp = (v: number, a: number, b: number) =>
     Math.max(a, Math.min(b, v));
 
-//   const { camX, camY, camZ, zoom } = useControls(
-//     "camera", {
-//       camX: { value: 0, min: -1500, max: 1500, step: 1 },
-//       camY: { value: 0, min: -1500, max: 1500, step: 1 },
-//       camZ: { value: 200, min: -1500, max: 1500, step: 1 },
-//       zoom: { value: 1, min: 0.01, max: 10, step: 0.05 },
-//     }
-// );
+  //   const { camX, camY, camZ, zoom } = useControls(
+  //     "camera", {
+  //       camX: { value: 0, min: -1500, max: 1500, step: 1 },
+  //       camY: { value: 0, min: -1500, max: 1500, step: 1 },
+  //       camZ: { value: 200, min: -1500, max: 1500, step: 1 },
+  //       zoom: { value: 1, min: 0.01, max: 10, step: 0.05 },
+  //     }
+  // );
 
-const gui = new GUI();
-gui.add( document, 'title' );
-//https://lil-gui.georgealways.com/#Guide#Adding-Controllers
-
-
+  const gui = new GUI();
+  gui.add(document, "title");
+  //https://lil-gui.georgealways.com/#Guide#Adding-Controllers
 
   return (
     <div
@@ -707,9 +707,11 @@ gui.add( document, 'title' );
           top: 10,
           right: 10,
           zIndex: 20,
-          background: "rgba(0,0,0,.6)",
-          color: "#eee",
-          border: "1px solid rgba(255,255,255,.25)",
+          background: showUI ? "rgba(0,0,0,.6)" : "transparent",
+          color: showUI ? "#eee" : "transparent",
+          border: showUI
+            ? "1px solid rgba(255,255,255,.25)"
+            : "1px solid transparent",
           borderRadius: 6,
           padding: "6px 10px",
           cursor: "pointer",
