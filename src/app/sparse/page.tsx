@@ -381,6 +381,10 @@ export default function SparseSurfacePage() {
   const capturingRef = useRef<boolean>(false);
   const frameCountRef = useRef<number>(0);
 
+  // 커스텀 자동 회전을 위한 refs
+  const customRotationTimeRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(0);
+
   // State
   const [status, setStatus] = useState<string>("라이브 시작 버튼을 눌러주세요.");
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
@@ -455,17 +459,34 @@ export default function SparseSurfacePage() {
       CONFIG.NEAR,
       CONFIG.FAR
     );
-    camera.position.set(0, 0, CONFIG.INITIAL_Z);
+    // 초기 카메라 위치: 원형 회전 시작점 (angle=0, 정면 약간 아래)
+    const initRadius = CONFIG.INITIAL_Z * 1.8;
+    const initTheta = 0; // sin(0) = 0
+    const initPhi = Math.PI * 0.5 + Math.PI * 0.15; // phiCenter + phiAmplitude
+    const initX = initRadius * Math.sin(initPhi) * Math.sin(initTheta);
+    const initY = initRadius * Math.cos(initPhi);
+    const initZ = initRadius * Math.sin(initPhi) * Math.cos(initTheta);
+    camera.position.set(initX, initY, initZ);
+    camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.autoRotate = autoRotate;
-    controls.autoRotateSpeed = autoRotateSpeed;
+    controls.autoRotate = false; // 기본 autoRotate 비활성화 (커스텀 사용)
     // 회전 제한: 뒷면이 보이지 않도록 수평 회전을 -90도 ~ +90도로 제한
     controls.minAzimuthAngle = -Math.PI / 2;
     controls.maxAzimuthAngle = Math.PI / 2;
+    // 수직 회전 제한
+    controls.minPolarAngle = Math.PI * 0.2; // 위쪽 제한
+    controls.maxPolarAngle = Math.PI * 0.8; // 아래쪽 제한
+    (controls as any)._customAutoRotate = autoRotate; // 초기 상태 설정
     controlsRef.current = controls;
+
+    // 원형 회전 설정
+    const thetaAmplitude = Math.PI / 4;  // 좌우 회전 범위 (-45° ~ +45°)
+    const phiCenter = Math.PI * 0.5;     // 수직 중심 (정면)
+    const phiAmplitude = Math.PI * 0.15; // 상하 회전 범위
+    const cameraRadius = CONFIG.INITIAL_Z * 1.8; // 카메라 거리
 
     const onResize = () => {
       if (!rendererRef.current || !cameraRef.current || !mountRef.current) return;
@@ -478,12 +499,48 @@ export default function SparseSurfacePage() {
     window.addEventListener("resize", onResize);
 
     let raf = 0;
-    const loop = () => {
+    const loop = (currentTime: number) => {
       raf = requestAnimationFrame(loop);
+      
+      // 커스텀 자동 회전
+      if (controlsRef.current && cameraRef.current) {
+        const ctrl = controlsRef.current;
+        const cam = cameraRef.current;
+        
+        if (lastTimeRef.current === 0) {
+          lastTimeRef.current = currentTime;
+        }
+        
+        const deltaTime = (currentTime - lastTimeRef.current) / 1000;
+        lastTimeRef.current = currentTime;
+        
+        if ((ctrl as any)._customAutoRotate) {
+          customRotationTimeRef.current += deltaTime;
+          
+          // 부드러운 원형 회전: sin/cos로 원을 그리듯 이동
+          // autoRotateSpeed로 한 바퀴 도는 시간 조절 (기본 0.3 -> 약 20초)
+          const cycleTime = 2 * Math.PI / (ctrl.autoRotateSpeed || 0.3);
+          const angle = (customRotationTimeRef.current / cycleTime) * 2 * Math.PI;
+          
+          // theta: 좌우 회전 (sin)
+          // phi: 상하 회전 (cos) - sin과 위상차를 두어 원형 경로 생성
+          const theta = thetaAmplitude * Math.sin(angle);
+          const phi = phiCenter + phiAmplitude * Math.cos(angle);
+          
+          // 구면 좌표를 카메라 위치로 변환
+          const x = cameraRadius * Math.sin(phi) * Math.sin(theta);
+          const y = cameraRadius * Math.cos(phi);
+          const z = cameraRadius * Math.sin(phi) * Math.cos(theta);
+          
+          cam.position.set(x, y, z);
+          cam.lookAt(0, 0, 0);
+        }
+      }
+      
       controls.update();
       renderer.render(scene, camera);
     };
-    loop();
+    loop(0);
 
     return () => {
       stopCapture({ skipState: true, skipStatus: true });
@@ -514,7 +571,12 @@ export default function SparseSurfacePage() {
 
   useEffect(() => {
     if (controlsRef.current) {
-      controlsRef.current.autoRotate = autoRotate;
+      // 커스텀 자동 회전 플래그 설정
+      (controlsRef.current as any)._customAutoRotate = autoRotate;
+      if (!autoRotate) {
+        // 자동 회전 비활성화 시 시간 리셋
+        customRotationTimeRef.current = 0;
+      }
     }
   }, [autoRotate]);
 
