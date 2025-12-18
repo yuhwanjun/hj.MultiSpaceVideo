@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -66,7 +66,7 @@ export default function PointPage() {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | THREE.OrthographicCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
@@ -85,6 +85,23 @@ export default function PointPage() {
   const [status, setStatus] = useState<string>("웹캠 시작 버튼을 눌러 주세요.");
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
   const [showUI, setShowUI] = useState<boolean>(true);
+
+  // ==========================================================================
+  // 카메라 설정 (직교/퍼스펙티브, 위치, 줌)
+  // ==========================================================================
+  const [useOrthographic, setUseOrthographic] = useState<boolean>(false);
+  const [cameraPosition, setCameraPosition] = useState<{
+    x: number;
+    y: number;
+    z: number;
+  }>({ x: 0, y: 0, z: CAMERA_CONFIG.INITIAL_Z });
+  const [cameraZoom, setCameraZoom] = useState<number>(1);
+  const [autoRotate, setAutoRotate] = useState<boolean>(
+    CAMERA_CONFIG.DEFAULT_AUTO_ROTATE
+  );
+  const [autoRotateSpeed, setAutoRotateSpeed] = useState<number>(
+    CAMERA_CONFIG.DEFAULT_AUTO_ROTATE_SPEED
+  );
 
   // ==========================================================================
   // 샘플링 설정 (config.ts의 SAMPLING_CONFIG 기본값 사용)
@@ -183,6 +200,10 @@ export default function PointPage() {
     zMaxBase: 30,
   });
 
+  // 직교 카메라 크기 참조 (퍼스펙티브 ↔ 직교 전환 시 보존)
+  const orthoSizeRef = useRef<number>(200);
+  const initialCameraModeRef = useRef<boolean>(false);
+
   // ==========================================================================
   // 최적화 핵심: Ring Buffer + DataTexture
   // - colorTexture: GPU에서 직접 샘플링하는 색상 텍스처
@@ -215,6 +236,185 @@ export default function PointPage() {
   );
 
   // ==========================================================================
+  // 카메라 위치/줌 상태 동기화 콜백
+  // ==========================================================================
+  const updateCameraPositionState = useCallback(() => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const { x, y, z } = camera.position;
+    setCameraPosition((prev) => {
+      if (
+        Math.abs(prev.x - x) < 1e-4 &&
+        Math.abs(prev.y - y) < 1e-4 &&
+        Math.abs(prev.z - z) < 1e-4
+      ) {
+        return prev;
+      }
+      return { x, y, z };
+    });
+    const currentZoom = camera.zoom;
+    setCameraZoom((prev) => (Math.abs(prev - currentZoom) < 1e-4 ? prev : currentZoom));
+  }, []);
+
+  // ==========================================================================
+  // 카메라 타입 전환 (퍼스펙티브 ↔ 직교)
+  // ==========================================================================
+  const configureCamera = useCallback(
+    (useOrtho: boolean) => {
+      if (!mountRef.current || !rendererRef.current) return;
+
+      const width = mountRef.current.clientWidth || 1;
+      const height = mountRef.current.clientHeight || 1;
+      const aspect = width / Math.max(height, 1e-6);
+      const previous = cameraRef.current;
+
+      let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+
+      if (useOrtho) {
+        let frustumHeight = orthoSizeRef.current;
+        if (previous instanceof THREE.PerspectiveCamera) {
+          const distance = previous.position.length();
+          const fovRad = THREE.MathUtils.degToRad(previous.fov);
+          frustumHeight =
+            (2 * distance * Math.tan(fovRad / 2)) /
+            Math.max(previous.zoom, 1e-3);
+        } else if (previous instanceof THREE.OrthographicCamera) {
+          frustumHeight = previous.top - previous.bottom;
+        }
+        orthoSizeRef.current = frustumHeight;
+        const frustumWidth = frustumHeight * aspect;
+        const orthoCam = new THREE.OrthographicCamera(
+          -frustumWidth / 2,
+          frustumWidth / 2,
+          frustumHeight / 2,
+          -frustumHeight / 2,
+          CAMERA_CONFIG.NEAR,
+          CAMERA_CONFIG.FAR * 4
+        );
+        if (previous instanceof THREE.OrthographicCamera) {
+          orthoCam.zoom = previous.zoom;
+        }
+        camera = orthoCam;
+      } else {
+        let fov: number = CAMERA_CONFIG.FOV;
+        if (previous instanceof THREE.OrthographicCamera) {
+          const distance = previous.position.length();
+          const heightUsed =
+            (previous.top - previous.bottom) / Math.max(previous.zoom, 1e-3);
+          if (distance > 1e-3) {
+            fov = THREE.MathUtils.radToDeg(
+              2 * Math.atan((heightUsed * 0.5) / distance)
+            );
+          }
+        } else if (previous instanceof THREE.PerspectiveCamera) {
+          fov = previous.fov;
+        }
+        const perspectiveCam = new THREE.PerspectiveCamera(
+          fov,
+          aspect,
+          CAMERA_CONFIG.NEAR,
+          CAMERA_CONFIG.FAR
+        );
+        if (previous instanceof THREE.PerspectiveCamera) {
+          perspectiveCam.zoom = previous.zoom;
+        }
+        camera = perspectiveCam;
+      }
+
+      if (previous) {
+        camera.position.copy(previous.position);
+        camera.quaternion.copy(previous.quaternion);
+        camera.up.copy(previous.up);
+      } else {
+        camera.position.set(0, 0, CAMERA_CONFIG.INITIAL_Z);
+      }
+
+      if (camera instanceof THREE.PerspectiveCamera) {
+        const distance = camera.position.length();
+        orthoSizeRef.current =
+          (2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) /
+          Math.max(camera.zoom, 1e-3);
+      } else if (camera instanceof THREE.OrthographicCamera) {
+        orthoSizeRef.current = camera.top - camera.bottom;
+      }
+
+      camera.updateProjectionMatrix();
+      cameraRef.current = camera;
+
+      const currentControls = controlsRef.current;
+      if (currentControls) {
+        const target = currentControls.target.clone();
+        currentControls.object = camera;
+        currentControls.enableDamping = true;
+        currentControls.target.copy(target);
+        currentControls.update();
+      } else {
+        const controls = new OrbitControls(
+          camera,
+          rendererRef.current.domElement
+        );
+        controls.enableDamping = true;
+        controls.addEventListener("change", updateCameraPositionState);
+        controlsRef.current = controls;
+      }
+      updateCameraPositionState();
+    },
+    [updateCameraPositionState]
+  );
+
+  // ==========================================================================
+  // 카메라 프리셋 위치 이동
+  // ==========================================================================
+  const moveCameraTo = useCallback(
+    (dir: "front" | "back" | "left" | "right" | "top" | "bottom") => {
+      const d = CAMERA_CONFIG.INITIAL_Z;
+      let x = 0,
+        y = 0,
+        z = 0;
+      switch (dir) {
+        case "front":
+          z = d;
+          break;
+        case "back":
+          z = -d;
+          break;
+        case "left":
+          x = -d;
+          break;
+        case "right":
+          x = d;
+          break;
+        case "top":
+          y = d;
+          break;
+        case "bottom":
+          y = -d;
+          break;
+      }
+      setCameraPosition({ x, y, z });
+      const controls = controlsRef.current;
+      if (controls) {
+        controls.target.set(0, 0, 0);
+        controls.update();
+      }
+    },
+    []
+  );
+
+  // ==========================================================================
+  // 카메라 위치 축별 설정
+  // ==========================================================================
+  const setCameraPositionAxis = useCallback(
+    (axis: "x" | "y" | "z", value: number) => {
+      setCameraPosition((prev) => {
+        if (prev[axis] === value) return prev;
+        return { ...prev, [axis]: value };
+      });
+    },
+    []
+  );
+
+  // ==========================================================================
   // Three.js 씬 초기화 (마운트 시 1회 실행)
   // ==========================================================================
   useEffect(() => {
@@ -240,29 +440,27 @@ export default function PointPage() {
     scene.background = new THREE.Color(RENDERER_CONFIG.BACKGROUND_COLOR);
     sceneRef.current = scene;
 
-    // 카메라 생성 (config 값 사용)
-    const camera = new THREE.PerspectiveCamera(
-      CAMERA_CONFIG.FOV,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
-      CAMERA_CONFIG.NEAR,
-      CAMERA_CONFIG.FAR
-    );
-    camera.position.set(0, 0, CAMERA_CONFIG.INITIAL_Z);
-    cameraRef.current = camera;
+    // 카메라 + 컨트롤 생성 (configureCamera 사용)
+    configureCamera(initialCameraModeRef.current);
 
-    // 오빗 컨트롤
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controlsRef.current = controls;
-
-    // 리사이즈 핸들러
+    // 리사이즈 핸들러 (직교/퍼스펙티브 모두 지원)
     const onResize = () => {
       if (!rendererRef.current || !cameraRef.current || !mountRef.current)
         return;
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
       rendererRef.current.setSize(w, h);
-      cameraRef.current.aspect = w / h;
+      const aspect = w / Math.max(h, 1);
+      if (cameraRef.current instanceof THREE.PerspectiveCamera) {
+        cameraRef.current.aspect = aspect;
+      } else if (cameraRef.current instanceof THREE.OrthographicCamera) {
+        const frustumHeight = orthoSizeRef.current;
+        const frustumWidth = frustumHeight * aspect;
+        cameraRef.current.left = -frustumWidth / 2;
+        cameraRef.current.right = frustumWidth / 2;
+        cameraRef.current.top = frustumHeight / 2;
+        cameraRef.current.bottom = -frustumHeight / 2;
+      }
       cameraRef.current.updateProjectionMatrix();
     };
     window.addEventListener("resize", onResize);
@@ -312,7 +510,7 @@ export default function PointPage() {
     const startTime = performance.now();
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      controls.update();
+      controlsRef.current?.update();
 
       // 시간 업데이트 (Fluid 노이즈 애니메이션용)
       timeRef.current = (performance.now() - startTime) / 1000;
@@ -320,7 +518,10 @@ export default function PointPage() {
         materialRef.current.uniforms.uTime.value = timeRef.current;
       }
 
-      renderer.render(scene, camera);
+      const camera = cameraRef.current;
+      if (camera) {
+        renderer.render(scene, camera);
+      }
     };
     loop();
 
@@ -331,7 +532,11 @@ export default function PointPage() {
       window.removeEventListener("resize", onResize);
       currentMount?.removeEventListener("mousemove", onMouseMove);
       disposePoints();
-      controls.dispose();
+      const controls = controlsRef.current;
+      if (controls) {
+        controls.removeEventListener("change", updateCameraPositionState);
+        controls.dispose();
+      }
       renderer.dispose();
       if (renderer.domElement && renderer.domElement.parentElement) {
         renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -342,7 +547,7 @@ export default function PointPage() {
       rendererRef.current = null;
       controlsRef.current = null;
     };
-  }, []);
+  }, [configureCamera, updateCameraPositionState]);
 
   // ==========================================================================
   // Uniform 업데이트 Effects
@@ -449,6 +654,58 @@ export default function PointPage() {
   }, [jitterScale]);
 
   // ==========================================================================
+  // 카메라 관련 Effects
+  // ==========================================================================
+
+  // 카메라 타입 변경 (퍼스펙티브 ↔ 직교)
+  useEffect(() => {
+    if (!rendererRef.current) return;
+    configureCamera(useOrthographic);
+  }, [configureCamera, useOrthographic]);
+
+  // 카메라 위치 동기화
+  useEffect(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    if (
+      Math.abs(camera.position.x - cameraPosition.x) < 1e-4 &&
+      Math.abs(camera.position.y - cameraPosition.y) < 1e-4 &&
+      Math.abs(camera.position.z - cameraPosition.z) < 1e-4
+    ) {
+      return;
+    }
+    camera.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
+    camera.lookAt(controls.target);
+    controls.update();
+  }, [cameraPosition]);
+
+  // 카메라 줌 동기화
+  useEffect(() => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const z = Math.max(0.01, cameraZoom);
+    if (Math.abs(camera.zoom - z) < 1e-4) return;
+    camera.zoom = z;
+    camera.updateProjectionMatrix();
+    controlsRef.current?.update();
+  }, [cameraZoom]);
+
+  // 자동 회전 설정
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.autoRotate = autoRotate;
+  }, [autoRotate]);
+
+  // 자동 회전 속도 설정
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.autoRotateSpeed = autoRotateSpeed;
+  }, [autoRotateSpeed]);
+
+  // ==========================================================================
   // 상태 로깅 헬퍼
   // ==========================================================================
   function log(msg: string) {
@@ -542,13 +799,17 @@ export default function PointPage() {
     disposePoints();
 
     // DataTexture 생성 (Ring buffer 색상 저장)
-    const colorData = new Uint8Array(pixelsPerFrame * targetFrames * 4);
+    // 텍스처 레이아웃: (width, height * frames) - WebGL MAX_TEXTURE_SIZE 제한 고려
+    // 기존 (pixelsPerFrame, frames) 방식은 해상도가 높을 때 제한 초과
+    const texWidth = targetW;
+    const texHeight = targetH * targetFrames;
+    const colorData = new Uint8Array(texWidth * texHeight * 4);
     colorData.fill(0);
 
     const colorTexture = new THREE.DataTexture(
       colorData,
-      pixelsPerFrame,
-      targetFrames,
+      texWidth,
+      texHeight,
       THREE.RGBAFormat,
       THREE.UnsignedByteType
     );
@@ -590,6 +851,9 @@ export default function PointPage() {
         uWriteIndex: { value: 0 },
         uTotalFrames: { value: targetFrames },
         uPixelsPerFrame: { value: pixelsPerFrame },
+        // 새로운 텍스처 레이아웃을 위한 uniform
+        uTexWidth: { value: targetW },
+        uTexHeight: { value: targetH },
         uColorTex: { value: colorTexture },
         uMouseEnabled: { value: mouseEnabled },
         uMousePos: { value: new THREE.Vector3(0, 0, 0) },
@@ -655,22 +919,24 @@ export default function PointPage() {
 
     if (!video || !ctx || !colorData || !colorTexture || !material) return;
 
-    const pixelsPerFrame = targetW * targetH;
     const writeIndex = writeIndexRef.current;
 
     // 비디오 프레임 캡처
     ctx.drawImage(video, 0, 0, targetW, targetH);
     const { data } = ctx.getImageData(0, 0, targetW, targetH);
 
-    // Ring buffer: 현재 writeIndex 행에만 데이터 기록
-    const rowOffset = writeIndex * pixelsPerFrame * 4;
-    for (let p = 0; p < pixelsPerFrame; p++) {
-      const srcBase = p * 4;
-      const dstBase = rowOffset + p * 4;
-      colorData[dstBase] = data[srcBase]; // R
-      colorData[dstBase + 1] = data[srcBase + 1]; // G
-      colorData[dstBase + 2] = data[srcBase + 2]; // B
-      colorData[dstBase + 3] = 255; // A
+    // 새로운 텍스처 레이아웃: (width, height * frames)
+    // writeIndex번째 프레임은 Y 좌표 (writeIndex * targetH) ~ ((writeIndex + 1) * targetH - 1) 영역에 저장
+    const frameYOffset = writeIndex * targetH;
+    for (let y = 0; y < targetH; y++) {
+      for (let x = 0; x < targetW; x++) {
+        const srcBase = (y * targetW + x) * 4;
+        const dstBase = ((frameYOffset + y) * targetW + x) * 4;
+        colorData[dstBase] = data[srcBase]; // R
+        colorData[dstBase + 1] = data[srcBase + 1]; // G
+        colorData[dstBase + 2] = data[srcBase + 2]; // B
+        colorData[dstBase + 3] = 255; // A
+      }
     }
 
     // GPU 텍스처 업데이트
@@ -1052,6 +1318,236 @@ export default function PointPage() {
             disabled={isCapturing}
           />
           <span />
+
+          {/* 카메라 설정 */}
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              borderTop: "1px solid rgba(255,255,255,0.2)",
+              paddingTop: 8,
+              marginTop: 4,
+            }}
+          >
+            <div style={{ color: "#8af", fontSize: 11, marginBottom: 6 }}>
+              📷 카메라 설정
+            </div>
+          </div>
+
+          <label>카메라</label>
+          <button
+            onClick={() => setUseOrthographic((prev) => !prev)}
+            style={{
+              gridColumn: "2 / -1",
+              background: "rgba(0,0,0,.6)",
+              color: "#eee",
+              border: "1px solid rgba(255,255,255,.25)",
+              borderRadius: 6,
+              padding: "6px 10px",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            {useOrthographic ? "직교 (Orthographic)" : "원근 (Perspective)"}
+          </button>
+
+          <span />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 6,
+              gridColumn: "2 / -1",
+            }}
+          >
+            <button
+              onClick={() => moveCameraTo("front")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Front
+            </button>
+            <button
+              onClick={() => moveCameraTo("back")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Back
+            </button>
+            <button
+              onClick={() => moveCameraTo("left")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Left
+            </button>
+            <button
+              onClick={() => moveCameraTo("right")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Right
+            </button>
+            <button
+              onClick={() => moveCameraTo("top")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Top
+            </button>
+            <button
+              onClick={() => moveCameraTo("bottom")}
+              style={{
+                background: "rgba(0,0,0,.6)",
+                color: "#eee",
+                border: "1px solid rgba(255,255,255,.25)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Bottom
+            </button>
+          </div>
+
+          <label>카메라 X</label>
+          <input
+            type="range"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.x}
+            onChange={(e) =>
+              setCameraPositionAxis("x", parseFloat(e.currentTarget.value))
+            }
+          />
+          <input
+            type="number"
+            min={-500}
+            max={500}
+            step={1}
+            value={Math.round(cameraPosition.x)}
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              if (!Number.isNaN(v)) {
+                setCameraPositionAxis("x", clamp(v, -500, 500));
+              }
+            }}
+            style={{ width: 60 }}
+          />
+
+          <label>카메라 Y</label>
+          <input
+            type="range"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.y}
+            onChange={(e) =>
+              setCameraPositionAxis("y", parseFloat(e.currentTarget.value))
+            }
+          />
+          <input
+            type="number"
+            min={-500}
+            max={500}
+            step={1}
+            value={Math.round(cameraPosition.y)}
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              if (!Number.isNaN(v)) {
+                setCameraPositionAxis("y", clamp(v, -500, 500));
+              }
+            }}
+            style={{ width: 60 }}
+          />
+
+          <label>카메라 Z</label>
+          <input
+            type="range"
+            min={-500}
+            max={500}
+            step={1}
+            value={cameraPosition.z}
+            onChange={(e) =>
+              setCameraPositionAxis("z", parseFloat(e.currentTarget.value))
+            }
+          />
+          <input
+            type="number"
+            min={-500}
+            max={500}
+            step={1}
+            value={Math.round(cameraPosition.z)}
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              if (!Number.isNaN(v)) {
+                setCameraPositionAxis("z", clamp(v, -500, 500));
+              }
+            }}
+            style={{ width: 60 }}
+          />
+
+          <label>Zoom</label>
+          <input
+            type="range"
+            min={0.1}
+            max={10}
+            step={0.05}
+            value={cameraZoom}
+            onChange={(e) => setCameraZoom(parseFloat(e.currentTarget.value))}
+          />
+          <span style={{ opacity: 0.8 }}>{cameraZoom.toFixed(2)}</span>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={autoRotate}
+              onChange={(e) => setAutoRotate(e.currentTarget.checked)}
+            />
+            자동 회전
+          </label>
+          <input
+            type="range"
+            min={CAMERA_CONFIG.MIN_AUTO_ROTATE_SPEED}
+            max={CAMERA_CONFIG.MAX_AUTO_ROTATE_SPEED}
+            step={CAMERA_CONFIG.STEP_AUTO_ROTATE_SPEED}
+            value={autoRotateSpeed}
+            onChange={(e) => setAutoRotateSpeed(parseFloat(e.currentTarget.value))}
+            disabled={!autoRotate}
+          />
+          <span style={{ opacity: autoRotate ? 0.8 : 0.4 }}>
+            {autoRotateSpeed.toFixed(1)}
+          </span>
 
           {/* 시각적 설정 */}
           <label>Spacing (z)</label>

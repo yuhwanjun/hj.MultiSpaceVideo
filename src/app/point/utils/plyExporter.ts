@@ -123,7 +123,6 @@ export function createPLYHeaderBinary(totalPoints: number): string {
  */
 export function createPLYDataASCII(data: PLYExportData): string {
   const { colorData, width, height, frames, spacing, writeIndex } = data;
-  const pixelsPerFrame = width * height;
   const totalPoints = calcTotalPoints(width, height, frames);
 
   const xHalf = calcHalf(width);
@@ -147,9 +146,9 @@ export function createPLYDataASCII(data: PLYExportData): string {
       for (let x = 0; x < width; x++) {
         const xPos = x - xHalf;
 
-        // 색상 데이터 읽기
+        // 색상 데이터 읽기 (새 텍스처 레이아웃: width, height * frames)
         const pixelIdx = calcPixelIndex(x, y, width);
-        const colorIdx = calcColorDataIndex(actualFrame, pixelIdx, pixelsPerFrame);
+        const colorIdx = calcColorDataIndex(actualFrame, pixelIdx, width, height);
 
         const r = colorData[colorIdx];
         const g = colorData[colorIdx + 1];
@@ -194,7 +193,6 @@ export function createPLYDataASCII(data: PLYExportData): string {
  */
 export function createPLYDataBinary(data: PLYExportData): Uint8Array {
   const { colorData, width, height, frames, spacing, writeIndex } = data;
-  const pixelsPerFrame = width * height;
   const totalPoints = calcTotalPoints(width, height, frames);
 
   const xHalf = calcHalf(width);
@@ -220,8 +218,9 @@ export function createPLYDataBinary(data: PLYExportData): Uint8Array {
       for (let x = 0; x < width; x++) {
         const xPos = x - xHalf;
 
+        // 색상 데이터 읽기 (새 텍스처 레이아웃: width, height * frames)
         const pixelIdx = calcPixelIndex(x, y, width);
-        const colorIdx = calcColorDataIndex(actualFrame, pixelIdx, pixelsPerFrame);
+        const colorIdx = calcColorDataIndex(actualFrame, pixelIdx, width, height);
 
         // Float32 좌표값 (little endian)
         dataView.setFloat32(offset, xPos, true);

@@ -139,27 +139,43 @@ export function calcZPosition(
 }
 
 /**
- * 색상 데이터 인덱스 계산
+ * 색상 데이터 인덱스 계산 (새 텍스처 레이아웃)
  * 
  * @description
  * Ring buffer 기반 색상 텍스처에서 특정 픽셀의 색상 데이터 인덱스를 계산합니다.
+ * 텍스처 레이아웃: (width, height * frames)
  * RGBA 형식이므로 4를 곱합니다.
  * 
  * @param frameIndex - 프레임 인덱스
  * @param pixelIndex - 프레임 내 픽셀 인덱스 (y * width + x)
- * @param pixelsPerFrame - 프레임당 픽셀 수 (width * height)
+ * @param width - 텍스처 너비 (= 캡처 너비)
+ * @param height - 단일 프레임 높이 (= 캡처 높이)
  * @returns 색상 데이터 배열의 시작 인덱스
  * 
  * @example
- * // 128x72 해상도에서 프레임 5, 픽셀 1000의 인덱스
- * calcColorDataIndex(5, 1000, 128 * 72);  // (5 * 9216 + 1000) * 4
+ * // 144x255 해상도에서 프레임 5, 픽셀 (10, 20)의 인덱스
+ * calcColorDataIndex(5, 20 * 144 + 10, 144, 255);
  */
 export function calcColorDataIndex(
   frameIndex: number,
   pixelIndex: number,
-  pixelsPerFrame: number
+  width: number,
+  height?: number
 ): number {
-  return (frameIndex * pixelsPerFrame + pixelIndex) * 4;
+  // 하위 호환성: height가 없으면 기존 방식 사용 (pixelsPerFrame으로 해석)
+  if (height === undefined) {
+    // 기존 방식: (frameIndex * pixelsPerFrame + pixelIndex) * 4
+    return (frameIndex * width + pixelIndex) * 4;
+  }
+  
+  // 새 텍스처 레이아웃: (width, height * frames)
+  // pixelIndex = y * width + x
+  const x = pixelIndex % width;
+  const y = Math.floor(pixelIndex / width);
+  
+  // 텍스처 좌표: (x, frameIndex * height + y)
+  // 1D 인덱스: ((frameIndex * height + y) * width + x) * 4
+  return ((frameIndex * height + y) * width + x) * 4;
 }
 
 /**

@@ -17,7 +17,7 @@ export const SAMPLING_CONFIG = {
    * @default 128
    * @range 8 ~ 512 (8 단위)
    */
-  DEFAULT_WIDTH: 128,
+  DEFAULT_WIDTH: 144,
   MIN_WIDTH: 8,
   STEP_WIDTH: 8,
 
@@ -27,7 +27,7 @@ export const SAMPLING_CONFIG = {
    * @default 72
    * @range 8 ~ 512 (8 단위)
    */
-  DEFAULT_HEIGHT: 72,
+  DEFAULT_HEIGHT: 255,
   MIN_HEIGHT: 8,
   STEP_HEIGHT: 8,
 
@@ -65,11 +65,11 @@ export const VISUAL_CONFIG = {
    * - 각 점의 화면상 크기
    * - sizeAttenuation이 true면 거리에 따라 자동 조절됨
    * @default 0.8
-   * @range 0.1 ~ 5 (0.1 단위)
+   * @range 0.1 ~ 20 (0.1 단위)
    */
   DEFAULT_POINT_SIZE: 0.8,
   MIN_POINT_SIZE: 0.1,
-  MAX_POINT_SIZE: 5,
+  MAX_POINT_SIZE: 20,
   STEP_POINT_SIZE: 0.1,
 
   /**
@@ -243,6 +243,24 @@ export const CAMERA_CONFIG = {
    * @default 180
    */
   INITIAL_Z: 180,
+
+  /**
+   * 자동 회전 활성화 여부
+   * @default false
+   */
+  DEFAULT_AUTO_ROTATE: false,
+
+  /**
+   * 자동 회전 속도
+   * - 양수: 시계 방향, 음수: 반시계 방향
+   * - 값이 클수록 빠르게 회전
+   * @default 1.0
+   * @range 0.1 ~ 10 (0.1 단위)
+   */
+  DEFAULT_AUTO_ROTATE_SPEED: 1.0,
+  MIN_AUTO_ROTATE_SPEED: 0.1,
+  MAX_AUTO_ROTATE_SPEED: 10,
+  STEP_AUTO_ROTATE_SPEED: 0.1,
 } as const;
 
 // ============================================================================
@@ -287,15 +305,17 @@ export const SLICE_CONFIG = {
   /**
    * X축 슬라이스 기본 범위
    * - 실제 범위는 샘플링 해상도에 따라 동적으로 결정됨
+   * - 144px 너비 기준: (144-1)/2 ≈ 72
    */
-  DEFAULT_X_MIN: -64 as number,
-  DEFAULT_X_MAX: 64 as number,
+  DEFAULT_X_MIN: -72 as number,
+  DEFAULT_X_MAX: 72 as number,
 
   /**
    * Y축 슬라이스 기본 범위
+   * - 255px 높이 기준: (255-1)/2 ≈ 127
    */
-  DEFAULT_Y_MIN: -36 as number,
-  DEFAULT_Y_MAX: 36 as number,
+  DEFAULT_Y_MIN: -127 as number,
+  DEFAULT_Y_MAX: 127 as number,
 
   /**
    * Z축 슬라이스 기본 범위

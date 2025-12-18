@@ -72,8 +72,12 @@ export const vertexShader = `
   uniform float uTotalFrames;    // 전체 프레임 수
   uniform float uPixelsPerFrame; // 프레임당 픽셀 수
   
+  // 텍스처 레이아웃: (width, height * frames)
+  uniform float uTexWidth;       // 텍스처 너비 (= 캡처 너비)
+  uniform float uTexHeight;      // 텍스처 높이 (= 캡처 높이, 단일 프레임)
+  
   // 색상 텍스처
-  uniform sampler2D uColorTex;   // 색상 데이터 (width=pixelsPerFrame, height=frames)
+  uniform sampler2D uColorTex;   // 색상 데이터 (width=texWidth, height=texHeight*frames)
   
   // 마우스 인터랙션 설정
   uniform bool uMouseEnabled;    // 효과 활성화 여부
@@ -267,9 +271,14 @@ export const vertexShader = `
     // ------------------------------------------------------------------------
     // 3. 텍스처에서 색상 읽기
     // ------------------------------------------------------------------------
+    // 새로운 텍스처 레이아웃: (width, height * frames)
+    // aPixelIndex = y * width + x 형태로 저장됨
+    float pixelX = mod(aPixelIndex, uTexWidth);
+    float pixelY = floor(aPixelIndex / uTexWidth);
+    
     // UV 좌표 계산 (0.5 오프셋으로 텍셀 중앙 샘플링)
-    float texU = (aPixelIndex + 0.5) / uPixelsPerFrame;
-    float texV = (aFrameIndex + 0.5) / uTotalFrames;
+    float texU = (pixelX + 0.5) / uTexWidth;
+    float texV = (aFrameIndex * uTexHeight + pixelY + 0.5) / (uTexHeight * uTotalFrames);
     vec4 texColor = texture2D(uColorTex, vec2(texU, texV));
     vColor = texColor.rgb;
     
