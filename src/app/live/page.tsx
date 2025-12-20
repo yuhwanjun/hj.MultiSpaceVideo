@@ -36,6 +36,9 @@ export default function Page() {
   const [opacity, setOpacity] = useState<number>(1.0);      // 포인트 불투명도
   const [sizeAttenuation, setSizeAttenuation] = useState<boolean>(true);
   const [showUI, setShowUI] = useState<boolean>(true);
+  const [autoRotate, setAutoRotate] = useState<boolean>(true);
+  const [autoRotateSpeed, setAutoRotateSpeed] = useState<number>(0.3);
+  const [cameraZoom, setCameraZoom] = useState<number>(1.5); // 줌 레벨 (1.0 = 기본, 높을수록 멀리)
 
   // Slice ranges (object space; z range uses spacing-applied units)
   const [xMin, setXMin] = useState<number>(-64);
@@ -64,6 +67,11 @@ export default function Page() {
   const rafRef = useRef<number | null>(null);
   const rvfcRef = useRef<number | null>(null);
   const capturingRef = useRef<boolean>(false);
+  
+  // 자동 회전을 위한 refs
+  const customRotationTimeRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(0);
+  const cameraZoomRef = useRef<number>(1.5);
 
   const hasRVFC = useMemo(
     () => typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype,
@@ -92,13 +100,29 @@ export default function Page() {
       0.1,
       2000
     );
-    camera.position.set(0, 0, 180);
+    // 초기 카메라 위치: 원형 회전 시작점
+    const initRadius = 180 * 1.5;
+    const initPhi = Math.PI * 0.5 + Math.PI * 0.15;
+    camera.position.set(0, initRadius * Math.cos(initPhi), initRadius * Math.sin(initPhi));
+    camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
     // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    // 회전 제한: 뒷면이 보이지 않도록
+    controls.minAzimuthAngle = -Math.PI / 2;
+    controls.maxAzimuthAngle = Math.PI / 2;
+    controls.minPolarAngle = Math.PI * 0.2;
+    controls.maxPolarAngle = Math.PI * 0.8;
+    (controls as any)._customAutoRotate = true; // 초기 상태
     controlsRef.current = controls;
+
+    // 원형 회전 설정
+    const thetaAmplitude = Math.PI / 4;  // 좌우 회전 범위
+    const phiCenter = Math.PI * 0.5;     // 수직 중심
+    const phiAmplitude = Math.PI * 0.15; // 상하 회전 범위
+    const baseCameraDistance = 180;      // 기본 카메라 거리
 
     // Resize handler
     const onResize = () => {
@@ -111,14 +135,47 @@ export default function Page() {
     };
     window.addEventListener("resize", onResize);
 
-    // Animation loop
+    // Animation loop with custom rotation
     let raf = 0;
-    const loop = () => {
+    const loop = (currentTime: number) => {
       raf = requestAnimationFrame(loop);
+      
+      // 커스텀 자동 회전
+      if (controlsRef.current && cameraRef.current) {
+        const ctrl = controlsRef.current;
+        const cam = cameraRef.current;
+        
+        if (lastTimeRef.current === 0) {
+          lastTimeRef.current = currentTime;
+        }
+        
+        const deltaTime = (currentTime - lastTimeRef.current) / 1000;
+        lastTimeRef.current = currentTime;
+        
+        if ((ctrl as any)._customAutoRotate) {
+          customRotationTimeRef.current += deltaTime;
+          
+          // 부드러운 원형 회전
+          const cycleTime = 2 * Math.PI / (ctrl.autoRotateSpeed || 0.3);
+          const angle = (customRotationTimeRef.current / cycleTime) * 2 * Math.PI;
+          const cameraRadius = baseCameraDistance * cameraZoomRef.current;
+          
+          const theta = thetaAmplitude * Math.sin(angle);
+          const phi = phiCenter + phiAmplitude * Math.cos(angle);
+          
+          const x = cameraRadius * Math.sin(phi) * Math.sin(theta);
+          const y = cameraRadius * Math.cos(phi);
+          const z = cameraRadius * Math.sin(phi) * Math.cos(theta);
+          
+          cam.position.set(x, y, z);
+          cam.lookAt(0, 0, 0);
+        }
+      }
+      
       controls.update();
       renderer.render(scene, camera);
     };
-    loop();
+    loop(0);
 
     return () => {
       stopCapture({ skipState: true, skipStatus: true });
@@ -171,6 +228,27 @@ export default function Page() {
       materialRef.current.needsUpdate = true;
     }
   }, [sizeAttenuation]);
+
+  // 자동 회전 상태 업데이트
+  useEffect(() => {
+    if (controlsRef.current) {
+      (controlsRef.current as any)._customAutoRotate = autoRotate;
+      if (!autoRotate) {
+        customRotationTimeRef.current = 0;
+      }
+    }
+  }, [autoRotate]);
+
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotateSpeed = autoRotateSpeed;
+    }
+  }, [autoRotateSpeed]);
+
+  // 줌 레벨 업데이트
+  useEffect(() => {
+    cameraZoomRef.current = cameraZoom;
+  }, [cameraZoom]);
 
   // Slice uniform updates
   useEffect(() => {
@@ -506,12 +584,27 @@ export default function Page() {
           top: 10,
           right: 10,
           zIndex: 20,
-          background: "rgba(0,0,0,.6)",
-          color: "#eee",
-          border: "1px solid rgba(255,255,255,.25)",
+          background: showUI ? "rgba(0,0,0,.6)" : "rgba(0,0,0,0)",
+          color: showUI ? "#eee" : "rgba(255,255,255,0)",
+          border: showUI ? "1px solid rgba(255,255,255,.25)" : "1px solid rgba(255,255,255,0)",
           borderRadius: 6,
           padding: "6px 10px",
           cursor: "pointer",
+          transition: "all 0.3s ease",
+        }}
+        onMouseEnter={(e) => {
+          if (!showUI) {
+            e.currentTarget.style.background = "rgba(0,0,0,.3)";
+            e.currentTarget.style.color = "#eee";
+            e.currentTarget.style.border = "1px solid rgba(255,255,255,.15)";
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!showUI) {
+            e.currentTarget.style.background = "rgba(0,0,0,0)";
+            e.currentTarget.style.color = "rgba(255,255,255,0)";
+            e.currentTarget.style.border = "1px solid rgba(255,255,255,0)";
+          }
         }}
       >
         {showUI ? "UI 숨기기" : "UI 보이기"}
@@ -631,6 +724,43 @@ export default function Page() {
           </label>
           <span />
           <span />
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={autoRotate}
+              onChange={(e) => setAutoRotate(e.currentTarget.checked)}
+            />
+            자동 회전
+          </label>
+          <span />
+          <span />
+
+          {autoRotate && (
+            <>
+              <label>회전 속도</label>
+              <input
+                type="range"
+                min={0.1}
+                max={2}
+                step={0.1}
+                value={autoRotateSpeed}
+                onChange={(e) => setAutoRotateSpeed(parseFloat(e.currentTarget.value))}
+              />
+              <span style={{ opacity: 0.8 }}>{autoRotateSpeed.toFixed(1)}</span>
+
+              <label>줌</label>
+              <input
+                type="range"
+                min={0.5}
+                max={3}
+                step={0.1}
+                value={cameraZoom}
+                onChange={(e) => setCameraZoom(parseFloat(e.currentTarget.value))}
+              />
+              <span style={{ opacity: 0.8 }}>{cameraZoom.toFixed(1)}</span>
+            </>
+          )}
 
           <label>X slice</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>

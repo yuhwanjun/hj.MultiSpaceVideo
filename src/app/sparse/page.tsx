@@ -842,17 +842,17 @@ export default function SparseSurfacePage() {
     // writeIndex가 0일 때 = 새로운 cycle의 시작
     // 이 시점에서 현재 프레임을 Back에 저장하면 대략 frames 프레임 차이가 유지됨
     if (writeIndex === 0) {
-      for (let y = 0; y < activeH; y++) {
-        for (let x = 0; x < activeW; x++) {
-          const srcIdx = (y * activeW + x) * 4;
-          const dstX = regions.back.x + x;
-          const dstY = regions.back.y + y;
-          const dstIdx = (dstY * texWidth + dstX) * 4;
+    for (let y = 0; y < activeH; y++) {
+      for (let x = 0; x < activeW; x++) {
+        const srcIdx = (y * activeW + x) * 4;
+        const dstX = regions.back.x + x;
+        const dstY = regions.back.y + y;
+        const dstIdx = (dstY * texWidth + dstX) * 4;
 
-          colorData[dstIdx] = data[srcIdx];
-          colorData[dstIdx + 1] = data[srcIdx + 1];
-          colorData[dstIdx + 2] = data[srcIdx + 2];
-          colorData[dstIdx + 3] = 255;
+        colorData[dstIdx] = data[srcIdx];
+        colorData[dstIdx + 1] = data[srcIdx + 1];
+        colorData[dstIdx + 2] = data[srcIdx + 2];
+        colorData[dstIdx + 3] = 255;
         }
       }
     }
